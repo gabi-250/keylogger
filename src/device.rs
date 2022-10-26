@@ -1,9 +1,16 @@
+use crate::keys::key_code_to_char;
+use futures::ready;
 use std::convert::TryFrom;
 use std::fs::{self, File};
+use std::future::Future;
 use std::io;
 use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::fs::FileTypeExt;
 use std::path::PathBuf;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::{Context, Poll};
+use tokio::io::unix::AsyncFd;
 
 const _IOC_NRBITS: libc::c_ulong = 8;
 const _IOC_TYPEBITS: libc::c_ulong = 8;
@@ -24,7 +31,7 @@ const EV_REP: libc::c_ulong = 1 << 20;
 pub(crate) struct Keyboard {
     pub(crate) name: String,
     pub(crate) device: PathBuf,
-    pub(crate) file: File,
+    pub(crate) async_fd: AsyncFd<File>,
 }
 
 impl TryFrom<PathBuf> for Keyboard {
@@ -41,10 +48,114 @@ impl TryFrom<PathBuf> for Keyboard {
             ));
         }
 
+        let res = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_SETFL, libc::O_NONBLOCK) };
+
+        if res < 0 {
+            return Err(io::Error::last_os_error());
+        }
+
         let name = read_device_name(&file).unwrap();
 
-        Ok(Keyboard { name, device, file })
+        Ok(Keyboard {
+            name,
+            device,
+            async_fd: AsyncFd::new(file)?,
+        })
     }
+}
+
+impl Keyboard {
+    pub(crate) fn read_key_event(self: &Arc<Self>) -> KeyEventFuture {
+        KeyEventFuture(Arc::clone(self))
+    }
+}
+
+pub(crate) struct KeyEventFuture(Arc<Keyboard>);
+
+#[derive(Debug)]
+pub struct KeyEvent {
+    pub ty: KeyEventType,
+    pub code: u16,
+    pub chr: Option<char>,
+}
+
+#[derive(Debug)]
+pub enum KeyEventType {
+    Press,
+    Release,
+}
+
+impl TryFrom<&libc::input_event> for KeyEvent {
+    type Error = io::Error;
+
+    fn try_from(ev: &libc::input_event) -> Result<Self, Self::Error> {
+        // EV_KEY
+        if ev.type_ == 1 {
+            let ty = match ev.value {
+                0 => KeyEventType::Release,
+                1 => KeyEventType::Press,
+                n => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::Other,
+                        format!("invalid value for EV_KEY: {n}"),
+                    ))
+                }
+            };
+
+            Ok(Self {
+                ty,
+                code: ev.code,
+                chr: key_code_to_char(ev.code).ok(),
+            })
+        } else {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("unsupported event type: {}", ev.type_),
+            ));
+        }
+    }
+}
+
+impl Future for KeyEventFuture {
+    type Output = io::Result<Vec<KeyEvent>>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        loop {
+            let mut guard = ready!(self.0.async_fd.poll_read_ready(cx))?;
+
+            match guard.try_io(|inner| read_key_event(inner.as_raw_fd())) {
+                Ok(result) => return Poll::Ready(result),
+                Err(_) => continue,
+            }
+        }
+    }
+}
+
+fn read_key_event(fd: RawFd) -> io::Result<Vec<KeyEvent>> {
+    const MAX_INPUT_EV: usize = 128;
+
+    let default_event = libc::input_event {
+        time: libc::timeval {
+            tv_sec: 0,
+            tv_usec: 0,
+        },
+        type_: 0,
+        code: 0,
+        value: 0,
+    };
+    let mut input_events = [default_event; MAX_INPUT_EV];
+
+    let n = unsafe { libc::read(fd, input_events.as_mut_ptr() as *mut _, MAX_INPUT_EV) };
+
+    if n < 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    let n = (n as usize) / std::mem::size_of::<libc::input_event>();
+    Ok(input_events[..n]
+        .iter()
+        .filter_map(|e| KeyEvent::try_from(e).ok())
+        .collect())
 }
 
 pub(crate) fn find_keyboard_devices() -> io::Result<impl Iterator<Item = Keyboard>> {

