@@ -5,5 +5,5 @@ mod device;
 mod keylogger;
 pub(crate) mod keys;
 
-pub use device::KeyEvent;
+pub use device::{KeyEvent, KeyEventType};
 pub use keylogger::{KeyEventHandler, Keylogger};

@@ -7,7 +7,7 @@ use crate::device::{find_keyboard_devices, KeyEvent, Keyboard};
 
 #[async_trait]
 pub trait KeyEventHandler: Send + Sync {
-    async fn handle_ev(&self, kb_device: &Path, kb_name: &str, ev: Vec<KeyEvent>);
+    async fn handle_events(&self, kb_device: &Path, kb_name: &str, ev: Vec<KeyEvent>);
 
     fn handle_err(&self, err: io::Error) -> io::Result<()> {
         Err(err)
@@ -27,14 +27,23 @@ impl Keylogger {
         })
     }
 
-    pub fn spawn_loggers(self) -> io::Result<()> {
+    pub async fn start(self) -> io::Result<()> {
         if self.keyboards.is_empty() {
             return Err(io::Error::new(io::ErrorKind::Other, "no keyboards found"));
         }
 
-        for keyboard in self.keyboards {
-            let ev_handler = Arc::clone(&self.ev_handler);
-            tokio::spawn(handle_key_events(ev_handler, keyboard));
+        let handles = self
+            .keyboards
+            .into_iter()
+            .map(|kb| {
+                let ev_handler = Arc::clone(&self.ev_handler);
+
+                tokio::spawn(handle_key_events(ev_handler, kb))
+            })
+            .collect::<Vec<_>>();
+
+        for handle in handles {
+            handle.await??;
         }
 
         Ok(())
@@ -60,7 +69,7 @@ async fn handle_key_events(
         }
 
         ev_handler
-            .handle_ev(&keyboard.device, &keyboard.name, ev)
+            .handle_events(&keyboard.device, &keyboard.name, ev)
             .await;
     }
 }

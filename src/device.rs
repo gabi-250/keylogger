@@ -72,14 +72,14 @@ impl Keyboard {
 
 pub(crate) struct KeyEventFuture(Arc<Keyboard>);
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct KeyEvent {
     pub ty: KeyEventType,
     pub code: u16,
     pub chr: Option<char>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum KeyEventType {
     Press,
     Release,

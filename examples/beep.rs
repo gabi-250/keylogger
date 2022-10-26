@@ -7,17 +7,16 @@ struct Beeper;
 
 #[async_trait]
 impl KeyEventHandler for Beeper {
-    async fn handle_ev(&self, kb_device: &Path, kb_name: &str, ev: Vec<KeyEvent>) {
-        println!("[{} @ {}]: ev={:?}", kb_name, kb_device.display(), ev);
+    async fn handle_events(&self, kb_device: &Path, kb_name: &str, events: Vec<KeyEvent>) {
+        println!("[{} @ {}]: ev={:?}", kb_name, kb_device.display(), events);
     }
 }
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let keylogger = Keylogger::new(Beeper)?;
-    keylogger.spawn_loggers()?;
+    keylogger.start().await?;
 
-    loop {}
 
     Ok(())
 }
