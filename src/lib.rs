@@ -4,7 +4,7 @@ compile_error!("This crate only works on Linux");
 mod device;
 mod error;
 mod keylogger;
-pub(crate) mod keys;
+pub(crate) mod key_code;
 
 pub use device::{KeyEvent, KeyEventType};
 pub use error::KeyloggerError;

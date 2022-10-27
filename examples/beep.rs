@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use keylogger::{KeyEvent, KeyEventHandler, Keylogger, KeyloggerError};
-use std::io;
+
 use std::path::Path;
 
 struct Beeper;

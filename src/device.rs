@@ -1,6 +1,6 @@
 use crate::error::KeyloggerError;
 use crate::keylogger::KeyloggerResult;
-use crate::keys::key_code_to_char;
+use crate::key_code::KeyCode;
 use futures::ready;
 use std::convert::TryFrom;
 use std::fs::{self, File};
@@ -74,8 +74,7 @@ pub(crate) struct KeyEventFuture(Arc<Keyboard>);
 #[derive(Debug, PartialEq)]
 pub struct KeyEvent {
     pub ty: KeyEventType,
-    pub code: u16,
-    pub chr: Option<char>,
+    pub code: KeyCode,
 }
 
 #[derive(Debug, PartialEq)]
@@ -105,8 +104,7 @@ impl TryFrom<&libc::input_event> for KeyEvent {
 
         Ok(Self {
             ty,
-            code: ev.code,
-            chr: key_code_to_char(ev.code).ok(),
+            code: KeyCode::try_from(ev.code)?,
         })
     }
 }
