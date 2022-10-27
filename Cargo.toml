@@ -5,6 +5,8 @@ edition = "2021"
 
 [dependencies]
 async-trait = "0.1.58"
+cpal = { version = "0.14.1", features = ["jack"] }
 futures = "0.3.25"
 libc = "0.2.135"
+thiserror = "1.0.37"
 tokio = { version = "1.21.2", default-features = false, features = ["rt", "macros", "rt-multi-thread", "net"] }
