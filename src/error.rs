@@ -1,4 +1,5 @@
 use std::io;
+use std::path::PathBuf;
 use thiserror::Error;
 
 use crate::key_code::KeyCode;
@@ -9,8 +10,10 @@ pub enum KeyloggerError {
     Io(#[from] io::Error),
     #[error("no keyboard devices found")]
     NoDevicesFound,
-    #[error("invalid event: {0}")]
-    InvalidEvent(String),
+    #[error("not a keyboard device: {0}")]
+    NotAKeyboard(PathBuf),
+    #[error("invalid EV_KEY event: {0}")]
+    InvalidKeyEvent(String),
     #[error("invalid key code: {0}")]
     InvalidKeyCode(u16),
     #[error("failed to convert key code: {0:?}")]

@@ -3,8 +3,8 @@ use futures::future::join_all;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::device::{find_keyboard_devices, KeyEvent, Keyboard};
 use crate::error::KeyloggerError;
+use crate::keyboard::{find_keyboard_devices, KeyEvent, Keyboard};
 
 pub(crate) type KeyloggerResult<T> = Result<T, KeyloggerError>;
 
@@ -24,6 +24,7 @@ pub struct Keylogger {
 }
 
 impl Keylogger {
+    /// Create a new `Keylogger`.
     pub fn new(ev_handler: impl KeyEventHandler + 'static) -> KeyloggerResult<Self> {
         Ok(Self {
             ev_handler: Arc::new(ev_handler),
@@ -31,7 +32,10 @@ impl Keylogger {
         })
     }
 
-    pub async fn start(self) -> KeyloggerResult<()> {
+    /// Begin capturing key events.
+    ///
+    /// This function returns an error if no keyboard devices are detected.
+    pub async fn capture(self) -> KeyloggerResult<()> {
         if self.keyboards.is_empty() {
             return Err(KeyloggerError::NoDevicesFound);
         }
@@ -42,7 +46,7 @@ impl Keylogger {
             .map(|kb| {
                 let ev_handler = Arc::clone(&self.ev_handler);
 
-                tokio::spawn(handle_key_events(ev_handler, kb))
+                tokio::spawn(Self::handle_key_events(ev_handler, kb))
             })
             .collect::<Vec<_>>();
 
@@ -51,35 +55,34 @@ impl Keylogger {
 
         Err(KeyloggerError::KeyloggerTasksExited)
     }
-}
 
-async fn handle_key_events(
-    ev_handler: Arc<dyn KeyEventHandler>,
-    keyboard: Keyboard,
-) -> KeyloggerResult<()> {
-    let keyboard = Arc::new(keyboard);
-    loop {
-        let ev = match keyboard.read_key_event().await {
-            Ok(ev) => ev,
-            Err(e) => {
-                ev_handler.handle_err(e)?;
+    async fn handle_key_events(
+        ev_handler: Arc<dyn KeyEventHandler>,
+        keyboard: Keyboard,
+    ) -> KeyloggerResult<()> {
+        let keyboard = Arc::new(keyboard);
+
+        loop {
+            let events = match keyboard.read_key_events().await {
+                Ok(events) => events,
+                Err(e) => {
+                    ev_handler.handle_err(e)?;
+                    continue;
+                }
+            };
+
+            if events.is_empty() {
                 continue;
             }
-        };
 
-        if ev.is_empty() {
-            continue;
+            ev_handler
+                .handle_events(&keyboard.device, &keyboard.name, events)
+                .await;
         }
-
-        ev_handler
-            .handle_events(&keyboard.device, &keyboard.name, ev)
-            .await;
     }
 }
 
 #[cfg(test)]
 mod tests {
-    
-
     // TODO
 }
