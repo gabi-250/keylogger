@@ -1,3 +1,6 @@
+// A modified version of the `cpal` beeper example.
+// See: https://github.com/RustAudio/cpal/blob/master/examples/beep.rs
+
 use async_trait::async_trait;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use keylogger::{KeyEvent, KeyEventCause, KeyEventHandler, Keylogger, KeyloggerError};
@@ -34,22 +37,6 @@ impl KeyEventHandler for Beeper {
             .unwrap();
         }
     }
-}
-
-#[tokio::main]
-async fn main() -> Result<(), KeyloggerError> {
-    let host = cpal::default_host();
-    let device = host
-        .default_output_device()
-        .expect("failed to find output device");
-    println!("Output device: {}", device.name().unwrap());
-    let config = device.default_output_config().unwrap();
-    println!("Default output config: {:?}", config);
-    let beeper = Beeper { device, config };
-    let keylogger = Keylogger::new(beeper)?;
-    keylogger.capture().await?;
-
-    Ok(())
 }
 
 pub fn run<T>(
@@ -98,4 +85,19 @@ where
             *sample = value;
         }
     }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), KeyloggerError> {
+    let host = cpal::default_host();
+    let device = host
+        .default_output_device()
+        .expect("failed to find output device");
+    let config = device.default_output_config().unwrap();
+
+    let beeper = Beeper { device, config };
+    let keylogger = Keylogger::new(beeper)?;
+    keylogger.capture().await?;
+
+    Ok(())
 }

@@ -16,7 +16,10 @@ use tokio::io::unix::AsyncFd;
 
 pub(crate) use device::find_keyboard_devices;
 
-// Interesting Event types (see `input-event-codes.h`)
+// Some interesting Event types (see [input-event-codes.h] and the [kernel docs]).
+//
+// [input-event-codes.h]: https://elixir.bootlin.com/linux/v5.19.17/source/include/uapi/linux/input-event-codes.h#L38)
+// [kernel docs]: https://www.kernel.org/doc/html/latest/input/event-codes.html
 const EV_SYN: libc::c_ulong = 0x00;
 const EV_KEY: libc::c_ulong = 0x01;
 const EV_MSC: libc::c_ulong = 0x04;
@@ -27,6 +30,7 @@ const EV_KEY_RELEASE: i32 = 0;
 /// The `value` of an EV_KEY caused by a key press.
 const EV_KEY_PRESS: i32 = 1;
 
+/// A keyboard device.
 #[derive(Debug)]
 pub(crate) struct Keyboard {
     /// The name of the device.
@@ -78,7 +82,7 @@ pub struct KeyEvent {
     pub code: KeyCode,
 }
 
-/// The reason a `KeyEvent` was fired.
+/// The reason a `KeyEvent` fired.
 #[derive(Debug, PartialEq)]
 pub enum KeyEventCause {
     /// The key was pressed.

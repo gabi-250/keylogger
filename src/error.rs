@@ -4,6 +4,7 @@ use thiserror::Error;
 
 use crate::key_code::KeyCode;
 
+/// Errors encountered by the keylogger.
 #[derive(Error, Debug)]
 pub enum KeyloggerError {
     #[error("I/O error: {0}")]

@@ -8,38 +8,71 @@ use crate::keyboard::{find_keyboard_devices, KeyEvent, Keyboard};
 
 pub(crate) type KeyloggerResult<T> = Result<T, KeyloggerError>;
 
+/// Handle keystroke events.
+///
+/// # Notes
+///
+/// The [`Keylogger`](crate::Keylogger) spawns a separate task for each watched keyboard. Each task
+/// receives a reference to the [`KeyEventHandler`](crate::KeyEventHandler) provided, so if
+/// `handle_events` and `handle_err` need to block on some condition, implementors must ensure
+/// these methods only block for the keyboard task the condition pertains to rather than _all_
+/// tasks.
 #[async_trait]
 pub trait KeyEventHandler: Send + Sync {
+    /// Receive some [`KeyEvent`s](crate::KeyEvent) for processing.
     async fn handle_events(&self, kb_device: &Path, kb_name: &str, ev: Vec<KeyEvent>);
 
-    fn handle_err(&self, _err: KeyloggerError) -> Result<(), KeyloggerError> {
+    /// Handle an error that occurred while trying to capture keystrokes.
+    ///
+    /// This enables implementors to choose how capture errors are handled:
+    /// * returning an `Err` aborts the capture task of the keyboard device that encountered the
+    ///   error.
+    /// * returning `Ok(())` causes the keylogger to ignore the error and try reading more key
+    ///   events.
+    fn handle_err(
+        &self,
+        _kb_device: &Path,
+        _kb_name: &str,
+        _err: KeyloggerError,
+    ) -> Result<(), KeyloggerError> {
         // Ignore the error and keep on logging
         Ok(())
     }
 }
 
+/// A keylogger than can detect keyboards and watch for keystroke events.
 pub struct Keylogger {
+    /// The keystroke handler.
     ev_handler: Arc<dyn KeyEventHandler>,
+    /// The keyboard devices being watched.
     keyboards: Vec<Keyboard>,
 }
 
 impl Keylogger {
     /// Create a new `Keylogger`.
+    ///
+    /// This function returns an error if no keyboard devices are detected.
     pub fn new(ev_handler: impl KeyEventHandler + 'static) -> KeyloggerResult<Self> {
+        let keyboards = find_keyboard_devices()?.collect::<Vec<_>>();
+
+        if keyboards.is_empty() {
+            return Err(KeyloggerError::NoDevicesFound);
+        }
+
         Ok(Self {
             ev_handler: Arc::new(ev_handler),
-            keyboards: find_keyboard_devices()?.collect(),
+            keyboards,
         })
     }
 
     /// Begin capturing key events.
     ///
-    /// This function returns an error if no keyboard devices are detected.
+    /// This spawns a separate task for each watched keyboard.
+    ///
+    /// # Notes
+    ///
+    /// This method blocks until **all** capture tasks complete (i.e. by returning an error).
     pub async fn capture(self) -> KeyloggerResult<()> {
-        if self.keyboards.is_empty() {
-            return Err(KeyloggerError::NoDevicesFound);
-        }
-
         let handles = self
             .keyboards
             .into_iter()
@@ -50,7 +83,7 @@ impl Keylogger {
             })
             .collect::<Vec<_>>();
 
-        // Discard the result:
+        // Wait for the tasks to exit and discard the result
         let _ = join_all(handles).await;
 
         Err(KeyloggerError::KeyloggerTasksExited)
@@ -66,7 +99,7 @@ impl Keylogger {
             let events = match keyboard.read_key_events().await {
                 Ok(events) => events,
                 Err(e) => {
-                    ev_handler.handle_err(e)?;
+                    ev_handler.handle_err(&keyboard.device, &keyboard.name, e)?;
                     continue;
                 }
             };
@@ -80,9 +113,4 @@ impl Keylogger {
                 .await;
         }
     }
-}
-
-#[cfg(test)]
-mod tests {
-    // TODO
 }

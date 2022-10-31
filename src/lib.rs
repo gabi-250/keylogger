@@ -1,13 +1,19 @@
 //! This crate provides the necessary scaffolding for handling keyboard input events on Linux.
 //!
-//! For more information, see the [kernel docs].
+//! The keystrokes are captured by the [`Keylogger`](crate::Keylogger), which needs to be
+//! initialized with a [`KeyEventHandler`](crate::KeyEventHandler). The
+//! [`KeyEventHandler`](crate::KeyEventHandler) receives the captured [`KeyEvent`s](crate::KeyEvent)
+//! and must decide how to handle them.
 //!
 //! # Example
 //!
-//! A simple example that prints the captured keystrokes to stdout.
-//! ```
+//! A simple example that prints the captured keystrokes to stdout. Note the keylogger needs to run
+//! with root privileges.
+//!
+//! ```no_run
 //! use async_trait::async_trait;
 //! use keylogger::{KeyEvent, KeyEventCause, KeyEventHandler, Keylogger, KeyloggerError};
+//! use std::path::Path;
 //!
 //! struct Logger;
 //!
@@ -27,8 +33,6 @@
 //! }
 //!
 //! ```
-//!
-//! [kernel docs]: https://www.kernel.org/doc/html/latest/input/event-codes.html
 
 #[cfg(not(target_os = "linux"))]
 compile_error!("This crate only works on Linux");
@@ -38,6 +42,6 @@ pub(crate) mod key_code;
 mod keyboard;
 mod keylogger;
 
+pub use crate::keylogger::{KeyEventHandler, Keylogger};
 pub use error::KeyloggerError;
 pub use keyboard::{KeyEvent, KeyEventCause};
-pub use keylogger::{KeyEventHandler, Keylogger};
