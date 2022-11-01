@@ -17,6 +17,8 @@ pub enum KeyloggerError {
     InvalidKeyEvent(String),
     #[error("invalid key code: {0}")]
     InvalidKeyCode(u16),
+    #[error("invalid timestamp: sec={0} usec={1}")]
+    InvalidTimestamp(i64, i64),
     #[error("failed to convert key code: {0:?}")]
     KeyCodeConversion(KeyCode),
     #[error("unsuported event type: {0}")]

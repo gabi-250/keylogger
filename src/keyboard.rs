@@ -3,6 +3,7 @@ mod device;
 use crate::error::KeyloggerError;
 use crate::key_code::KeyCode;
 use crate::keylogger::KeyloggerResult;
+use chrono::naive::NaiveDateTime;
 use futures::ready;
 use std::convert::TryFrom;
 use std::fs::File;
@@ -76,6 +77,8 @@ pub(crate) struct KeyEventFuture(Arc<Keyboard>);
 /// A key event (EV_KEY).
 #[derive(Debug, PartialEq)]
 pub struct KeyEvent {
+    /// The timestamp of the event.
+    pub ts: NaiveDateTime,
     /// The action that triggered the event.
     pub cause: KeyEventCause,
     /// The key code of the key that triggered the event.
@@ -110,7 +113,13 @@ impl TryFrom<&libc::input_event> for KeyEvent {
             }
         };
 
+        let nsec = (ev.time.tv_usec * 1000)
+            .try_into()
+            .map_err(|_| KeyloggerError::InvalidTimestamp(ev.time.tv_sec, ev.time.tv_usec))?;
+        let ts = NaiveDateTime::from_timestamp(ev.time.tv_sec, nsec);
+
         Ok(Self {
+            ts,
             cause,
             code: KeyCode::try_from(ev.code)?,
         })

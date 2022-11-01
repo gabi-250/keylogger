@@ -7,15 +7,14 @@ use keylogger::{KeyEvent, KeyEventCause, KeyEventHandler, Keylogger, KeyloggerEr
 use std::io;
 use std::path::Path;
 
-struct Beeper {
-    device: cpal::Device,
-    config: cpal::SupportedStreamConfig,
-}
+struct Beeper(cpal::Device);
 
 #[async_trait]
 impl KeyEventHandler for Beeper {
     async fn handle_events(&self, kb_device: &Path, kb_name: &str, events: Vec<KeyEvent>) {
         println!("[{} @ {}]: ev={:?}", kb_name, kb_device.display(), events);
+
+        let config: cpal::SupportedStreamConfig = self.0.default_output_config().unwrap();
 
         for e in events {
             // Only handle key presses
@@ -23,15 +22,15 @@ impl KeyEventHandler for Beeper {
                 continue;
             }
 
-            match self.config.sample_format() {
+            match config.sample_format() {
                 cpal::SampleFormat::F32 => {
-                    run::<f32>(&self.device, &self.config.clone().into(), e.code as u16)
+                    run::<f32>(&self.0, &config.clone().into(), e.code as u16)
                 }
                 cpal::SampleFormat::I16 => {
-                    run::<i16>(&self.device, &self.config.clone().into(), e.code as u16)
+                    run::<i16>(&self.0, &config.clone().into(), e.code as u16)
                 }
                 cpal::SampleFormat::U16 => {
-                    run::<u16>(&self.device, &self.config.clone().into(), e.code as u16)
+                    run::<u16>(&self.0, &config.clone().into(), e.code as u16)
                 }
             }
             .unwrap();
@@ -50,7 +49,6 @@ where
     let sample_rate = config.sample_rate.0 as f32;
     let channels = config.channels as usize;
 
-    // Produce a sinusoid of maximum amplitude.
     let mut sample_clock = 0f32;
     let mut next_value = move || {
         sample_clock = (sample_clock + 1.0) % sample_rate;
@@ -93,9 +91,8 @@ async fn main() -> Result<(), KeyloggerError> {
     let device = host
         .default_output_device()
         .expect("failed to find output device");
-    let config = device.default_output_config().unwrap();
 
-    let beeper = Beeper { device, config };
+    let beeper = Beeper(device);
     let keylogger = Keylogger::new(beeper)?;
     keylogger.capture().await?;
 
