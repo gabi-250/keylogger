@@ -49,11 +49,34 @@ pub struct Keylogger {
 }
 
 impl Keylogger {
-    /// Create a new `Keylogger`.
+    /// Create a new `Keylogger`, auto-detecting the keyboard devices to monitor.
     ///
     /// This function returns an error if no keyboard devices are detected.
     pub fn new(ev_handler: impl KeyEventHandler + 'static) -> KeyloggerResult<Self> {
         let keyboards = find_keyboard_devices()?.collect::<Vec<_>>();
+
+        if keyboards.is_empty() {
+            return Err(KeyloggerError::NoDevicesFound);
+        }
+
+        Ok(Self {
+            ev_handler: Arc::new(ev_handler),
+            keyboards,
+        })
+    }
+
+    /// Create a new `Keylogger`, monitoring the specified keyboard devices.
+    ///
+    /// Out of the specified `devices`, only those that appear to be keyboards will be monitored.
+    /// If none of them appear to be keyboards, this function returns a
+    /// [`KeyloggerError::NoDevicesFound`](crate::KeyloggerError::NoDevicesFound) error.
+    pub fn with_devices<'a>(
+        devices: impl Iterator<Item = &'a Path>,
+        ev_handler: impl KeyEventHandler + 'static,
+    ) -> KeyloggerResult<Self> {
+        let keyboards = devices
+            .filter_map(|entry| Keyboard::try_from(entry).ok())
+            .collect::<Vec<_>>();
 
         if keyboards.is_empty() {
             return Err(KeyloggerError::NoDevicesFound);

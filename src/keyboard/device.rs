@@ -46,7 +46,7 @@ pub(crate) fn read_key_events(fd: RawFd) -> io::Result<Vec<KeyEvent>> {
 
 /// Find all available keyboard devices.
 pub(crate) fn find_keyboard_devices() -> KeyloggerResult<impl Iterator<Item = Keyboard>> {
-    Ok(find_char_devices()?.filter_map(|entry| Keyboard::try_from(entry).ok()))
+    Ok(find_char_devices()?.filter_map(|entry| Keyboard::try_from(entry.as_path()).ok()))
 }
 
 /// Set the `O_NONBLOCK` flag for the specified file descriptor.

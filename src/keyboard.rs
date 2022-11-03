@@ -9,7 +9,7 @@ use std::convert::TryFrom;
 use std::fs::File;
 use std::future::Future;
 use std::os::fd::AsRawFd;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -42,15 +42,15 @@ pub(crate) struct Keyboard {
     pub(crate) async_fd: AsyncFd<File>,
 }
 
-impl TryFrom<PathBuf> for Keyboard {
+impl TryFrom<&Path> for Keyboard {
     type Error = KeyloggerError;
 
-    fn try_from(device: PathBuf) -> Result<Self, Self::Error> {
-        let file = File::open(&device)?;
+    fn try_from(device: &Path) -> Result<Self, Self::Error> {
+        let file = File::open(device)?;
         let flags = device::read_event_flags(&file)?;
 
         if !has_keyboard_flags(flags) {
-            return Err(KeyloggerError::NotAKeyboard(device));
+            return Err(KeyloggerError::NotAKeyboard(device.into()));
         }
 
         device::set_nonblocking(&file)?;
@@ -59,7 +59,7 @@ impl TryFrom<PathBuf> for Keyboard {
 
         Ok(Keyboard {
             name,
-            device,
+            device: device.into(),
             async_fd: AsyncFd::new(file)?,
         })
     }
