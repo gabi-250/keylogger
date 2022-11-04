@@ -20,7 +20,7 @@ pub(crate) type KeyloggerResult<T> = Result<T, KeyloggerError>;
 #[async_trait]
 pub trait KeyEventHandler: Send + Sync {
     /// Receive some [`KeyEvent`s](crate::KeyEvent) for processing.
-    async fn handle_events(&self, kb_device: &Path, kb_name: &str, ev: Vec<KeyEvent>);
+    async fn handle_events(&self, kb_device: &Path, kb_name: &str, ev: &[KeyEvent]);
 
     /// Handle an error that occurred while trying to capture keystrokes.
     ///
@@ -132,7 +132,7 @@ impl Keylogger {
             }
 
             ev_handler
-                .handle_events(&keyboard.device, &keyboard.name, events)
+                .handle_events(&keyboard.device, &keyboard.name, &events)
                 .await;
         }
     }

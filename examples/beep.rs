@@ -11,7 +11,7 @@ struct Beeper(cpal::Device);
 
 #[async_trait]
 impl KeyEventHandler for Beeper {
-    async fn handle_events(&self, kb_device: &Path, kb_name: &str, events: Vec<KeyEvent>) {
+    async fn handle_events(&self, kb_device: &Path, kb_name: &str, events: &[KeyEvent]) {
         println!("[{} @ {}]: ev={:?}", kb_name, kb_device.display(), events);
 
         let config: cpal::SupportedStreamConfig = self.0.default_output_config().unwrap();

