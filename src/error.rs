@@ -1,5 +1,6 @@
 use std::io;
 use std::path::PathBuf;
+
 use thiserror::Error;
 
 use crate::key_code::KeyCode;

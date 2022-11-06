@@ -1,11 +1,12 @@
 // A modified version of the `cpal` beeper example.
 // See: https://github.com/RustAudio/cpal/blob/master/examples/beep.rs
 
+use std::io;
+use std::path::Path;
+
 use async_trait::async_trait;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use keylogger::{KeyEvent, KeyEventCause, KeyEventHandler, Keylogger, KeyloggerError};
-use std::io;
-use std::path::Path;
 
 struct Beeper(cpal::Device);
 

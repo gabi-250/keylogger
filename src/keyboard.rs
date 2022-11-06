@@ -1,10 +1,5 @@
 mod device;
 
-use crate::error::KeyloggerError;
-use crate::key_code::KeyCode;
-use crate::keylogger::KeyloggerResult;
-use chrono::naive::NaiveDateTime;
-use futures::ready;
 use std::convert::TryFrom;
 use std::fs::File;
 use std::future::Future;
@@ -13,9 +8,15 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
+
+use chrono::naive::NaiveDateTime;
+pub(crate) use device::find_keyboard_devices;
+use futures::ready;
 use tokio::io::unix::AsyncFd;
 
-pub(crate) use device::find_keyboard_devices;
+use crate::error::KeyloggerError;
+use crate::key_code::KeyCode;
+use crate::keylogger::KeyloggerResult;
 
 // Some interesting Event types (see [input-event-codes.h] and the [kernel docs]).
 //

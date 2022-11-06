@@ -1,7 +1,8 @@
-use async_trait::async_trait;
-use futures::future::join_all;
 use std::path::Path;
 use std::sync::Arc;
+
+use async_trait::async_trait;
+use futures::future::join_all;
 
 use crate::error::KeyloggerError;
 use crate::keyboard::{find_keyboard_devices, KeyEvent, Keyboard};

@@ -1,5 +1,6 @@
-use crate::KeyloggerError;
 use std::convert::TryFrom;
+
+use crate::KeyloggerError;
 
 /// See /usr/include/linux/input-event-codes.h
 #[allow(non_camel_case_types)]

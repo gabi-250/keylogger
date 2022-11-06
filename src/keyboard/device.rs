@@ -1,5 +1,3 @@
-use crate::keyboard::{KeyEvent, Keyboard};
-use crate::keylogger::KeyloggerResult;
 use std::convert::TryFrom;
 use std::fs::{self, File};
 use std::io;
@@ -7,6 +5,9 @@ use std::mem;
 use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::fs::FileTypeExt;
 use std::path::PathBuf;
+
+use crate::keyboard::{KeyEvent, Keyboard};
+use crate::keylogger::KeyloggerResult;
 
 const IOC_NRBITS: libc::c_ulong = 8;
 const IOC_TYPEBITS: libc::c_ulong = 8;
