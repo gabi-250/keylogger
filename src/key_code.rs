@@ -4,7 +4,7 @@ use crate::KeyloggerError;
 
 /// See /usr/include/linux/input-event-codes.h
 #[allow(non_camel_case_types)]
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum KeyCode {
     KEY_RESERVED = 0,
     KEY_ESC = 1,

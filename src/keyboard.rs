@@ -4,17 +4,18 @@ mod event_codes;
 use std::convert::TryFrom;
 use std::fmt;
 use std::future::Future;
-use std::os::fd::AsRawFd;
+use std::os::unix::io::AsRawFd;
 use std::path::Path;
 
 use chrono::naive::NaiveDateTime;
-pub(crate) use device::find_keyboard_devices;
-pub(crate) use device::KeyboardDevice;
-use event_codes::{EV_KEY, EV_KEY_PRESS, EV_KEY_RELEASE};
 
 use crate::error::KeyloggerError;
 use crate::key_code::KeyCode;
+use crate::keyboard::event_codes::{EV_KEY, EV_KEY_PRESS, EV_KEY_RELEASE};
 use crate::keylogger::KeyloggerResult;
+
+pub(crate) use crate::keyboard::device::find_keyboard_devices;
+pub(crate) use crate::keyboard::device::KeyboardDevice;
 
 /// A keyboard device.
 pub(crate) type KeyboardBox = Box<dyn KeyEventSource>;
@@ -30,7 +31,7 @@ pub(crate) trait KeyEventSource: AsRawFd + fmt::Debug + Send + Sync {
 }
 
 /// A key event (EV_KEY).
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct KeyEvent {
     /// The timestamp of the event.
     pub ts: NaiveDateTime,
@@ -41,7 +42,7 @@ pub struct KeyEvent {
 }
 
 /// The reason a `KeyEvent` fired.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum KeyEventCause {
     /// The key was pressed.
     Press,
