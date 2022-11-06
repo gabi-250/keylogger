@@ -1,79 +1,33 @@
 mod device;
+mod event_codes;
 
 use std::convert::TryFrom;
-use std::fs::File;
+use std::fmt;
 use std::future::Future;
 use std::os::fd::AsRawFd;
-use std::path::{Path, PathBuf};
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::{Context, Poll};
+use std::path::Path;
 
 use chrono::naive::NaiveDateTime;
 pub(crate) use device::find_keyboard_devices;
-use futures::ready;
-use tokio::io::unix::AsyncFd;
+pub(crate) use device::KeyboardDevice;
+use event_codes::{EV_KEY, EV_KEY_PRESS, EV_KEY_RELEASE};
 
 use crate::error::KeyloggerError;
 use crate::key_code::KeyCode;
 use crate::keylogger::KeyloggerResult;
 
-// Some interesting Event types (see [input-event-codes.h] and the [kernel docs]).
-//
-// [input-event-codes.h]: https://elixir.bootlin.com/linux/v5.19.17/source/include/uapi/linux/input-event-codes.h#L38)
-// [kernel docs]: https://www.kernel.org/doc/html/latest/input/event-codes.html
-const EV_SYN: libc::c_ulong = 0x00;
-const EV_KEY: libc::c_ulong = 0x01;
-const EV_MSC: libc::c_ulong = 0x04;
-const EV_REP: libc::c_ulong = 0x14;
-
-/// The `value` of an EV_KEY caused by a key being released.
-const EV_KEY_RELEASE: i32 = 0;
-/// The `value` of an EV_KEY caused by a key press.
-const EV_KEY_PRESS: i32 = 1;
-
 /// A keyboard device.
-#[derive(Debug)]
-pub(crate) struct Keyboard {
-    /// The name of the device.
-    pub(crate) name: String,
-    /// The path of the input device (e.g. `/dev/input/event0`).
-    pub(crate) device: PathBuf,
-    /// The file descriptor of the open input device file.
-    pub(crate) async_fd: AsyncFd<File>,
+pub(crate) type KeyboardBox = Box<dyn KeyEventSource>;
+
+pub(crate) trait KeyEventSource: AsRawFd + fmt::Debug + Send + Sync {
+    fn name(&self) -> &str;
+
+    fn path(&self) -> &Path;
+
+    fn key_events(
+        &self,
+    ) -> Box<dyn Future<Output = KeyloggerResult<Vec<KeyEvent>>> + Send + Sync + Unpin>;
 }
-
-impl TryFrom<&Path> for Keyboard {
-    type Error = KeyloggerError;
-
-    fn try_from(device: &Path) -> Result<Self, Self::Error> {
-        let file = File::open(device)?;
-        let flags = device::read_event_flags(&file)?;
-
-        if !has_keyboard_flags(flags) {
-            return Err(KeyloggerError::NotAKeyboard(device.into()));
-        }
-
-        device::set_nonblocking(&file)?;
-
-        let name = device::read_name(&file)?;
-
-        Ok(Keyboard {
-            name,
-            device: device.into(),
-            async_fd: AsyncFd::new(file)?,
-        })
-    }
-}
-
-impl Keyboard {
-    pub(crate) fn read_key_events(self: &Arc<Self>) -> KeyEventFuture {
-        KeyEventFuture(Arc::clone(self))
-    }
-}
-
-/// A future that resolves once a number of keyboard events have been received.
-pub(crate) struct KeyEventFuture(Arc<Keyboard>);
 
 /// A key event (EV_KEY).
 #[derive(Debug, PartialEq)]
@@ -125,27 +79,4 @@ impl TryFrom<&libc::input_event> for KeyEvent {
             code: KeyCode::try_from(ev.code)?,
         })
     }
-}
-
-impl Future for KeyEventFuture {
-    type Output = KeyloggerResult<Vec<KeyEvent>>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        loop {
-            let mut guard = ready!(self.0.async_fd.poll_read_ready(cx))?;
-
-            match guard.try_io(|inner| device::read_key_events(inner.as_raw_fd())) {
-                Ok(result) => return Poll::Ready(result.map_err(Into::into)),
-                Err(_) => continue,
-            }
-        }
-    }
-}
-
-/// Check whether the specified `flags` indicate the device is a keyboard.
-fn has_keyboard_flags(flags: libc::c_ulong) -> bool {
-    const KEYBOARD_FLAGS: libc::c_ulong =
-        (1 << EV_SYN) | (1 << EV_KEY) | (1 << EV_MSC) | (1 << EV_REP);
-
-    (flags & KEYBOARD_FLAGS) == KEYBOARD_FLAGS
 }

@@ -95,6 +95,7 @@ async fn main() -> Result<(), KeyloggerError> {
 
     let beeper = Beeper(device);
     let keylogger = Keylogger::new(beeper)?;
+
     keylogger.capture().await?;
 
     Ok(())

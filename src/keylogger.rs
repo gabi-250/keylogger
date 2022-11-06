@@ -1,3 +1,4 @@
+use std::convert::TryInto;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -5,7 +6,8 @@ use async_trait::async_trait;
 use futures::future::join_all;
 
 use crate::error::KeyloggerError;
-use crate::keyboard::{find_keyboard_devices, KeyEvent, Keyboard};
+use crate::keyboard::{find_keyboard_devices, KeyEvent, KeyboardBox};
+use crate::keyboard::{KeyEventSource, KeyboardDevice};
 
 pub(crate) type KeyloggerResult<T> = Result<T, KeyloggerError>;
 
@@ -46,7 +48,7 @@ pub struct Keylogger {
     /// The keystroke handler.
     ev_handler: Arc<dyn KeyEventHandler>,
     /// The keyboard devices being watched.
-    keyboards: Vec<Keyboard>,
+    keyboards: Vec<KeyboardBox>,
 }
 
 impl Keylogger {
@@ -71,12 +73,19 @@ impl Keylogger {
     /// Out of the specified `devices`, only those that appear to be keyboards will be monitored.
     /// If none of them appear to be keyboards, this function returns a
     /// [`KeyloggerError::NoDevicesFound`](crate::KeyloggerError::NoDevicesFound) error.
-    pub fn with_devices<'a>(
-        devices: impl Iterator<Item = &'a Path>,
+    pub fn with_devices<'p, P: AsRef<Path> + 'p>(
+        devices: impl Iterator<Item = &'p P>,
+        ev_handler: impl KeyEventHandler + 'static,
+    ) -> KeyloggerResult<Self> {
+        Self::with_event_sources::<KeyboardDevice, _>(devices.map(|d| d.as_ref()), ev_handler)
+    }
+
+    fn with_event_sources<K: KeyEventSource + 'static, I: TryInto<K>>(
+        devices: impl Iterator<Item = I>,
         ev_handler: impl KeyEventHandler + 'static,
     ) -> KeyloggerResult<Self> {
         let keyboards = devices
-            .filter_map(|entry| Keyboard::try_from(entry).ok())
+            .filter_map(|d| d.try_into().ok().map(|k| Box::new(k) as KeyboardBox))
             .collect::<Vec<_>>();
 
         if keyboards.is_empty() {
@@ -115,15 +124,15 @@ impl Keylogger {
 
     async fn handle_key_events(
         ev_handler: Arc<dyn KeyEventHandler>,
-        keyboard: Keyboard,
+        keyboard: KeyboardBox,
     ) -> KeyloggerResult<()> {
         let keyboard = Arc::new(keyboard);
 
         loop {
-            let events = match keyboard.read_key_events().await {
+            let events = match keyboard.key_events().await {
                 Ok(events) => events,
                 Err(e) => {
-                    ev_handler.handle_err(&keyboard.device, &keyboard.name, e)?;
+                    ev_handler.handle_err(keyboard.path(), keyboard.name(), e)?;
                     continue;
                 }
             };
@@ -133,7 +142,7 @@ impl Keylogger {
             }
 
             ev_handler
-                .handle_events(&keyboard.device, &keyboard.name, &events)
+                .handle_events(keyboard.path(), keyboard.name(), &events)
                 .await;
         }
     }

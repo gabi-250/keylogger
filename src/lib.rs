@@ -44,5 +44,4 @@ mod keylogger;
 
 pub use error::KeyloggerError;
 pub use keyboard::{KeyEvent, KeyEventCause};
-
-pub use crate::keylogger::{KeyEventHandler, Keylogger};
+pub use keylogger::{KeyEventHandler, Keylogger};
