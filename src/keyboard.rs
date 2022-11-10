@@ -31,7 +31,7 @@ pub(crate) trait KeyEventSource: AsRawFd + fmt::Debug + Send + Sync {
 }
 
 /// A key event (EV_KEY).
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct KeyEvent {
     /// The timestamp of the event.
     pub ts: NaiveDateTime,
@@ -42,7 +42,7 @@ pub struct KeyEvent {
 }
 
 /// The reason a `KeyEvent` fired.
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum KeyEventCause {
     /// The key was pressed.
     Press,

@@ -19,7 +19,7 @@
 //!
 //! #[async_trait]
 //! impl KeyEventHandler for Logger {
-//!     async fn handle_events(&self, kb_device: &Path, kb_name: &str, events: Vec<KeyEvent>) {
+//!     async fn handle_events(&self, kb_device: &Path, kb_name: &str, events: &[KeyEvent]) {
 //!         println!("[{} @ {}]: ev={:?}", kb_name, kb_device.display(), events);
 //!     }
 //! }
@@ -42,6 +42,7 @@ pub(crate) mod key_code;
 mod keyboard;
 mod keylogger;
 
+pub use crate::keylogger::{KeyEventHandler, Keylogger};
 pub use error::KeyloggerError;
+pub use key_code::KeyCode;
 pub use keyboard::{KeyEvent, KeyEventCause};
-pub use keylogger::{KeyEventHandler, Keylogger};
