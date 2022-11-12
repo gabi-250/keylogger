@@ -149,7 +149,6 @@ mod tests {
     use super::*;
     use crate::key_code::KeyCode;
     use crate::keyboard::{KeyEventCause, KeyEventSource};
-    use std::future::Future;
     use std::io::Cursor;
     use std::iter;
     use std::os::unix::io::{AsRawFd, RawFd};
@@ -167,6 +166,7 @@ mod tests {
         }
     }
 
+    #[async_trait::async_trait]
     impl KeyEventSource for TestEventSource {
         fn name(&self) -> &str {
             "test keeb"
@@ -176,13 +176,10 @@ mod tests {
             Path::new("/test/keeb")
         }
 
-        fn key_events(
-            &self,
-        ) -> Box<dyn Future<Output = KeyloggerResult<Vec<KeyEvent>>> + Send + Sync + Unpin>
-        {
+        async fn key_events(&self) -> KeyloggerResult<Vec<KeyEvent>> {
             let res = advance_ev_stream(&self.0).0;
 
-            Box::new(Box::pin(async { Ok(res) }))
+            Ok(res)
         }
     }
 

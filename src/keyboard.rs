@@ -3,7 +3,6 @@ mod event_codes;
 
 use std::convert::TryFrom;
 use std::fmt;
-use std::future::Future;
 use std::os::unix::io::AsRawFd;
 use std::path::Path;
 
@@ -20,14 +19,13 @@ pub(crate) use crate::keyboard::device::KeyboardDevice;
 /// A keyboard device.
 pub(crate) type KeyboardBox = Box<dyn KeyEventSource>;
 
+#[async_trait::async_trait]
 pub(crate) trait KeyEventSource: AsRawFd + fmt::Debug + Send + Sync {
     fn name(&self) -> &str;
 
     fn path(&self) -> &Path;
 
-    fn key_events(
-        &self,
-    ) -> Box<dyn Future<Output = KeyloggerResult<Vec<KeyEvent>>> + Send + Sync + Unpin>;
+    async fn key_events(&self) -> KeyloggerResult<Vec<KeyEvent>>;
 }
 
 /// A key event (EV_KEY).

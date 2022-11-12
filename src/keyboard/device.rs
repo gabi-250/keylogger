@@ -66,6 +66,7 @@ impl AsRawFd for KeyboardDevice {
     }
 }
 
+#[async_trait::async_trait]
 impl KeyEventSource for KeyboardDevice {
     fn name(&self) -> &str {
         &self.name
@@ -75,10 +76,8 @@ impl KeyEventSource for KeyboardDevice {
         self.device.as_path()
     }
 
-    fn key_events(
-        &self,
-    ) -> Box<dyn Future<Output = KeyloggerResult<Vec<KeyEvent>>> + Send + Sync + Unpin> {
-        Box::new(KeyEventFuture(Arc::clone(&self.async_fd)))
+    async fn key_events(&self) -> KeyloggerResult<Vec<KeyEvent>> {
+        KeyEventFuture(Arc::clone(&self.async_fd)).await
     }
 }
 
