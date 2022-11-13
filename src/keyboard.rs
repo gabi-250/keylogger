@@ -1,4 +1,4 @@
-mod device;
+pub(crate) mod device;
 mod event_codes;
 
 use std::convert::TryFrom;
@@ -13,8 +13,7 @@ use crate::key_code::KeyCode;
 use crate::keyboard::event_codes::{EV_KEY, EV_KEY_PRESS, EV_KEY_RELEASE};
 use crate::keylogger::KeyloggerResult;
 
-pub(crate) use crate::keyboard::device::find_keyboard_devices;
-pub(crate) use crate::keyboard::device::KeyboardDevice;
+pub(crate) use crate::keyboard::device::{find_keyboard_devices, KeyboardDevice};
 
 /// A keyboard device.
 pub(crate) type KeyboardBox = Box<dyn KeyEventSource>;

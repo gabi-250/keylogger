@@ -31,7 +31,7 @@ pub trait KeyEventHandler: Send + Sync {
     ///   error.
     /// * returning `Ok(())` causes the keylogger to ignore the error and try reading more key
     ///   events.
-    fn handle_err(
+    async fn handle_err(
         &self,
         _kb_device: &Path,
         _kb_name: &str,
@@ -128,7 +128,10 @@ impl Keylogger {
             let events = match keyboard.key_events().await {
                 Ok(events) => events,
                 Err(e) => {
-                    ev_handler.handle_err(keyboard.path(), keyboard.name(), e)?;
+                    ev_handler
+                        .handle_err(keyboard.path(), keyboard.name(), e)
+                        .await?;
+
                     continue;
                 }
             };
@@ -148,14 +151,53 @@ impl Keylogger {
 mod tests {
     use super::*;
     use crate::key_code::KeyCode;
+    use crate::keyboard::device::KeyEventResult;
     use crate::keyboard::{KeyEventCause, KeyEventSource};
     use std::io::Cursor;
     use std::iter;
     use std::os::unix::io::{AsRawFd, RawFd};
-    use std::sync::RwLock;
-    use tokio::sync::mpsc;
+    use tokio::sync::{mpsc, RwLock};
 
-    type EventStream = Arc<RwLock<Cursor<Vec<Vec<KeyEvent>>>>>;
+    type EventStream = Arc<RwLock<Cursor<Vec<KeyEventResult>>>>;
+
+    const EV_QUEUE_SIZE: usize = 1;
+
+    impl Clone for KeyloggerError {
+        fn clone(&self) -> Self {
+            use KeyloggerError::*;
+
+            match self {
+                Io(_) => unimplemented!("unexpected error type"),
+                NoDevicesFound => NoDevicesFound,
+                NotAKeyboard(e) => NotAKeyboard(e.clone()),
+                InvalidKeyEvent(e) => InvalidKeyEvent(e.clone()),
+                InvalidKeyCode(e) => InvalidKeyCode(*e),
+                InvalidTimestamp(s, ms) => InvalidTimestamp(*s, *ms),
+                KeyCodeConversion(e) => KeyCodeConversion(*e),
+                UnsupportedEventType(e) => UnsupportedEventType(*e),
+                KeyloggerTasksExited => KeyloggerTasksExited,
+            }
+        }
+    }
+
+    impl PartialEq for KeyloggerError {
+        fn eq(&self, other: &KeyloggerError) -> bool {
+            use KeyloggerError::*;
+
+            match (self, other) {
+                (Io(_), _) => unimplemented!("unexpected error type"),
+                (NoDevicesFound, NoDevicesFound) => true,
+                (NotAKeyboard(e1), NotAKeyboard(e2)) => e1.eq(e2),
+                (InvalidKeyEvent(e1), InvalidKeyEvent(e2)) => e1.eq(e2),
+                (InvalidKeyCode(e1), InvalidKeyCode(e2)) => e1.eq(e2),
+                (InvalidTimestamp(s1, ms1), InvalidTimestamp(s2, ms2)) => s1.eq(s2) && ms1.eq(ms2),
+                (KeyCodeConversion(e1), KeyCodeConversion(e2)) => e1.eq(e2),
+                (UnsupportedEventType(e1), UnsupportedEventType(e2)) => e1.eq(e2),
+                (KeyloggerTasksExited, KeyloggerTasksExited) => true,
+                _ => false,
+            }
+        }
+    }
 
     #[derive(Debug, Clone)]
     struct TestEventSource(EventStream);
@@ -176,71 +218,71 @@ mod tests {
             Path::new("/test/keeb")
         }
 
-        async fn key_events(&self) -> KeyloggerResult<Vec<KeyEvent>> {
-            let res = advance_ev_stream(&self.0).0;
+        async fn key_events(&self) -> KeyEventResult {
+            let mut lock = self.0.write().await;
+            let pos = lock.position();
+            let eos = pos == lock.get_ref().len() as u64;
 
-            Ok(res)
+            if !eos {
+                lock.set_position(pos + 1);
+
+                lock.get_ref()[pos as usize].clone()
+            } else {
+                // We've run out of test events
+                futures::future::pending::<KeyEventResult>().await
+            }
         }
-    }
-
-    enum ExpectedOutcome {
-        Ok(EventStream),
-        Err(KeyloggerError),
     }
 
     struct TestEventHandler {
-        outcome: ExpectedOutcome,
+        expected_events: EventStream,
         tx_done: mpsc::Sender<()>,
     }
 
-    fn make_ev_stream(ev: Vec<Vec<KeyEvent>>) -> EventStream {
-        Arc::new(RwLock::new(Cursor::new(ev)))
-    }
+    macro_rules! current_events {
+        ($events:expr) => {{
+            let pos = $events.position() - 1;
+            let is_last = pos == $events.get_ref().len() as u64 - 1;
 
-    fn advance_ev_stream(stream: &EventStream) -> (Vec<KeyEvent>, bool) {
-        let mut lock = stream.write().unwrap();
-        let pos = lock.position();
-        let res = lock.get_ref()[pos as usize].clone();
-        let is_last = pos == lock.get_ref().len() as u64 - 1;
-
-        if !is_last {
-            lock.set_position(pos + 1);
-        }
-
-        (res, is_last)
+            ($events.get_ref().get(pos as usize).unwrap(), is_last)
+        }};
     }
 
     #[async_trait]
     impl KeyEventHandler for TestEventHandler {
         async fn handle_events(&self, _: &Path, _: &str, ev: &[KeyEvent]) {
-            match &self.outcome {
-                ExpectedOutcome::Ok(expected_events) => {
-                    let (events, last) = advance_ev_stream(expected_events);
+            let lock = self.expected_events.read().await;
+            let (events, is_last) = current_events!(lock);
 
-                    assert_eq!(ev, events);
+            match events {
+                Ok(events) => assert_eq!(ev, events),
+                Err(_) => panic!("expected failure, got {:?})", ev),
+            }
 
-                    if last {
-                        self.tx_done.send(()).await.unwrap();
-                    }
-                }
-                ExpectedOutcome::Err(_) => {
-                    panic!("expected failure, got {:?})", ev);
-                }
+            if is_last {
+                self.tx_done.send(()).await.unwrap();
             }
         }
 
-        fn handle_err(
+        async fn handle_err(
             &self,
             _kb_device: &Path,
             _kb_name: &str,
             err: KeyloggerError,
         ) -> Result<(), KeyloggerError> {
-            match &self.outcome {
-                ExpectedOutcome::Ok(_) => {
-                    panic!("expected success, got {:?})", err);
-                }
-                ExpectedOutcome::Err(_expected_err) => Err(err),
+            let lock = self.expected_events.read().await;
+            let (events, is_last) = current_events!(lock);
+
+            match events {
+                Ok(_) => panic!("expected success, got {:?})", err),
+                Err(expected_err) => assert_eq!(&err, expected_err),
             }
+
+            if is_last {
+                self.tx_done.send(()).await.unwrap();
+            }
+
+            Ok(())
         }
     }
 
@@ -276,38 +318,38 @@ mod tests {
         tokio::spawn(keylogger.capture());
     }
 
-    macro_rules! event_stream {
-        [$([$($ev:tt($key:tt),)*],)*] => {
-            vec![
-                $(vec![$(KeyEvent::$ev(KeyCode::$key),)*],)*
-            ]
+    macro_rules! events {
+        [$($ev:tt($key:tt),)*] => {
+            Ok(vec![$(KeyEvent::$ev(KeyCode::$key),)*])
         }
     }
 
     #[tokio::test]
     async fn call_event_handler() {
-        const EV_QUEUE_SIZE: usize = 1;
-
-        let expected_events = event_stream![
-            [press(KEY_1), release(KEY_1),],
-            [
+        let expected_events = vec![
+            events![press(KEY_1), release(KEY_1),],
+            events![
                 press(KEY_A),
                 press(KEY_A),
                 press(KEY_A),
                 release(KEY_A),
                 release(KEY_B),
             ],
-            [release(KEY_Z),],
+            Err(KeyloggerError::InvalidKeyEvent("test event".to_string())),
+            events![release(KEY_Z),],
+            Err(KeyloggerError::InvalidKeyEvent("test event2".to_string())),
         ];
 
         let (tx_done, mut rx_done) = mpsc::channel::<()>(EV_QUEUE_SIZE);
 
-        let outcome = ExpectedOutcome::Ok(make_ev_stream(expected_events.clone()));
+        let expected_events = Arc::new(RwLock::new(Cursor::new(expected_events)));
+        let ev_src = TestEventSource(Arc::clone(&expected_events));
+        let ev_handler = TestEventHandler {
+            expected_events,
+            tx_done,
+        };
 
-        let ev_src = TestEventSource(make_ev_stream(expected_events));
-        let ev_handler = TestEventHandler { outcome, tx_done };
         spawn_keylogger(iter::once(ev_src), ev_handler);
-
         rx_done.recv().await.unwrap();
     }
 }

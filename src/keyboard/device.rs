@@ -27,6 +27,8 @@ const IOC_SIZESHIFT: libc::c_ulong = IOC_TYPESHIFT + IOC_TYPEBITS;
 const IOC_DIRSHIFT: libc::c_ulong = IOC_SIZESHIFT + IOC_SIZEBITS;
 const IOC_READ: libc::c_ulong = 2;
 
+pub(crate) type KeyEventResult = KeyloggerResult<Vec<KeyEvent>>;
+
 #[derive(Debug)]
 pub(crate) struct KeyboardDevice {
     /// The name of the device.
@@ -76,7 +78,7 @@ impl KeyEventSource for KeyboardDevice {
         self.device.as_path()
     }
 
-    async fn key_events(&self) -> KeyloggerResult<Vec<KeyEvent>> {
+    async fn key_events(&self) -> KeyEventResult {
         KeyEventFuture(Arc::clone(&self.async_fd)).await
     }
 }
