@@ -1,5 +1,13 @@
 # Keylogger
 
+[![AGPL-3.0 license][agpl-badge]][agpl-url]
+[![Build Status][actions-badge]][actions-url]
+
+[agpl-badge]: https://img.shields.io/badge/license-AGPL-purple.svg
+[agpl-url]: https://github.com/gabi-250/keylogger/blob/master/LICENSE
+[actions-badge]: https://github.com/gabi-250/keylogger/actions/workflows/test.yaml/badge.svg
+[actions-url]: https://github.com/gabi-250/keylogger/actions/workflows/test.yaml?query=branch%3Amaster+workflow%3A%22Run+tests%22
+
 This crate provides the necessary scaffolding for handling keyboard input events on Linux.
 
 The keystrokes are captured by the `Keylogger`, which needs to be initialized
