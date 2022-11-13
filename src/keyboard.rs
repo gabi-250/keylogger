@@ -69,7 +69,10 @@ impl TryFrom<&libc::input_event> for KeyEvent {
         let nsec = (ev.time.tv_usec * 1000)
             .try_into()
             .map_err(|_| KeyloggerError::InvalidTimestamp(ev.time.tv_sec, ev.time.tv_usec))?;
-        let ts = NaiveDateTime::from_timestamp(ev.time.tv_sec, nsec);
+
+        let ts = NaiveDateTime::from_timestamp_opt(ev.time.tv_sec, nsec).ok_or(
+            KeyloggerError::InvalidTimestamp(ev.time.tv_sec, ev.time.tv_usec),
+        )?;
 
         Ok(Self {
             ts,
