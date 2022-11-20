@@ -3,28 +3,77 @@ mod event_codes;
 
 use std::convert::TryFrom;
 use std::fmt;
-use std::os::unix::io::AsRawFd;
+use std::io::Cursor;
+use std::marker::Unpin;
 use std::path::Path;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 use chrono::naive::NaiveDateTime;
+use futures::Stream;
+use pin_project::pin_project;
 
 use crate::error::KeyloggerError;
 use crate::key_code::KeyCode;
 use crate::keyboard::event_codes::{EV_KEY, EV_KEY_PRESS, EV_KEY_RELEASE};
-use crate::keylogger::KeyloggerResult;
+use crate::KeyloggerResult;
 
-pub(crate) use crate::keyboard::device::{find_keyboard_devices, KeyboardDevice};
+pub(crate) use crate::keyboard::device::find_keyboard_devices;
 
-/// A keyboard device.
-pub(crate) type KeyboardBox = Box<dyn KeyEventSource>;
+type KeyEventResult = KeyloggerResult<Vec<KeyEvent>>;
 
-#[async_trait::async_trait]
-pub(crate) trait KeyEventSource: AsRawFd + fmt::Debug + Send + Sync {
+/// A generic keyboard device.
+#[pin_project]
+pub(crate) struct Keyboard<K: KeyEventSource> {
+    #[pin]
+    pub(crate) inner: K,
+    pub(crate) buffered_evs: Cursor<Vec<KeyEvent>>,
+}
+
+impl<K: KeyEventSource> Keyboard<K> {
+    fn new(inner: K) -> Self {
+        Self {
+            inner,
+            buffered_evs: Default::default(),
+        }
+    }
+}
+
+impl<K: KeyEventSource> Stream for Keyboard<K> {
+    type Item = KeyloggerResult<KeyEvent>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.project();
+        let current_pos = this.buffered_evs.position();
+        let len = this.buffered_evs.get_ref().len() as u64;
+
+        if current_pos >= len {
+            let inner_pin = Pin::new(this.inner.get_mut());
+            let evs = match KeyEventSource::poll_next(inner_pin, cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Ok(evs)) if evs.is_empty() => return Poll::Pending,
+                Poll::Ready(Ok(evs)) => evs,
+                Poll::Ready(Err(e)) => return Poll::Ready(Some(Err(e))),
+            };
+
+            *this.buffered_evs = Cursor::new(evs);
+            this.buffered_evs.set_position(0);
+        }
+
+        let pos = this.buffered_evs.position();
+        let ev = this.buffered_evs.get_ref()[pos as usize];
+        this.buffered_evs.set_position(pos + 1);
+
+        Poll::Ready(Some(Ok(ev)))
+    }
+}
+
+pub(crate) trait KeyEventSource: fmt::Debug + Unpin + Send + Sync {
     fn name(&self) -> &str;
 
     fn path(&self) -> &Path;
 
-    async fn key_events(&self) -> KeyloggerResult<Vec<KeyEvent>>;
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<KeyEventResult>;
 }
 
 /// A key event (EV_KEY).
@@ -79,5 +128,166 @@ impl TryFrom<&libc::input_event> for KeyEvent {
             cause,
             code: KeyCode::try_from(ev.code)?,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::key_code::KeyCode;
+    use crate::keyboard::{KeyEventCause, KeyEventSource};
+    use futures::StreamExt;
+    use std::io::Cursor;
+    use std::os::unix::io::{AsRawFd, RawFd};
+    use tokio::sync::mpsc;
+
+    const EV_QUEUE_SIZE: usize = 1;
+
+    type EventStream = Cursor<Vec<KeyEventResult>>;
+
+    impl Clone for KeyloggerError {
+        fn clone(&self) -> Self {
+            use KeyloggerError::*;
+
+            match self {
+                Io(_) => unimplemented!("unexpected error type"),
+                NotAKeyboard(e) => NotAKeyboard(e.clone()),
+                InvalidKeyEvent(e) => InvalidKeyEvent(e.clone()),
+                InvalidKeyCode(e) => InvalidKeyCode(*e),
+                InvalidTimestamp(s, ms) => InvalidTimestamp(*s, *ms),
+                KeyCodeConversion(e) => KeyCodeConversion(*e),
+                UnsupportedEventType(e) => UnsupportedEventType(*e),
+                KeyloggerTasksExited => KeyloggerTasksExited,
+            }
+        }
+    }
+
+    impl PartialEq for KeyloggerError {
+        fn eq(&self, other: &KeyloggerError) -> bool {
+            use KeyloggerError::*;
+
+            match (self, other) {
+                (Io(_), _) => unimplemented!("unexpected error type"),
+                (NotAKeyboard(e1), NotAKeyboard(e2)) => e1.eq(e2),
+                (InvalidKeyEvent(e1), InvalidKeyEvent(e2)) => e1.eq(e2),
+                (InvalidKeyCode(e1), InvalidKeyCode(e2)) => e1.eq(e2),
+                (InvalidTimestamp(s1, ms1), InvalidTimestamp(s2, ms2)) => s1.eq(s2) && ms1.eq(ms2),
+                (KeyCodeConversion(e1), KeyCodeConversion(e2)) => e1.eq(e2),
+                (UnsupportedEventType(e1), UnsupportedEventType(e2)) => e1.eq(e2),
+                (KeyloggerTasksExited, KeyloggerTasksExited) => true,
+                _ => false,
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    struct TestEventSource {
+        ev_stream: EventStream,
+        tx_done: mpsc::Sender<()>,
+    }
+
+    impl TestEventSource {
+        fn new(ev_stream: Vec<KeyEventResult>, tx_done: mpsc::Sender<()>) -> Self {
+            Self {
+                ev_stream: Cursor::new(ev_stream),
+                tx_done,
+            }
+        }
+    }
+
+    impl AsRawFd for TestEventSource {
+        fn as_raw_fd(&self) -> RawFd {
+            -1
+        }
+    }
+
+    impl KeyEventSource for TestEventSource {
+        fn name(&self) -> &str {
+            "test keeb"
+        }
+
+        fn path(&self) -> &Path {
+            Path::new("/test/keeb")
+        }
+
+        fn poll_next(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<KeyEventResult> {
+            let this = self.get_mut();
+            let ev_stream = &mut this.ev_stream;
+            let pos = ev_stream.position();
+            let eos = pos == ev_stream.get_ref().len() as u64;
+
+            if !eos {
+                ev_stream.set_position(pos + 1);
+
+                Poll::Ready(ev_stream.get_ref()[pos as usize].clone())
+            } else {
+                // We've run out of test events
+                this.tx_done.try_send(()).unwrap();
+                Poll::Pending
+            }
+        }
+    }
+
+    impl KeyEvent {
+        fn press(code: KeyCode) -> Self {
+            Self {
+                ts: Default::default(),
+                cause: KeyEventCause::Press,
+                code,
+            }
+        }
+
+        fn release(code: KeyCode) -> Self {
+            Self {
+                ts: Default::default(),
+                cause: KeyEventCause::Release,
+                code,
+            }
+        }
+    }
+
+    macro_rules! events {
+        [$($ev:tt($key:tt),)*] => {
+            Ok(vec![$(KeyEvent::$ev(KeyCode::$key),)*])
+        }
+    }
+
+    #[tokio::test]
+    async fn stream_with_errors() {
+        let expected_event_batches = vec![
+            events![press(KEY_1), release(KEY_1),],
+            events![
+                press(KEY_A),
+                press(KEY_A),
+                press(KEY_A),
+                release(KEY_A),
+                release(KEY_B),
+            ],
+            Err(KeyloggerError::InvalidKeyEvent("test event".to_string())),
+            events![release(KEY_Z),],
+            Err(KeyloggerError::InvalidKeyEvent("test event2".to_string())),
+        ];
+
+        let (tx_done, mut rx_done) = mpsc::channel::<()>(EV_QUEUE_SIZE);
+        let keyboard = Keyboard::new(TestEventSource::new(
+            expected_event_batches.clone(),
+            tx_done,
+        ));
+
+        let recorded_events = keyboard
+            .take_until(rx_done.recv())
+            .collect::<Vec<_>>()
+            .await;
+
+        let mut expected_events = vec![];
+
+        for event in expected_event_batches {
+            match event {
+                Ok(evs) => expected_events.extend(evs.into_iter().map(Ok)),
+                Err(e) => expected_events.push(Err(e)),
+            }
+        }
+
+        assert_eq!(recorded_events, expected_events);
     }
 }

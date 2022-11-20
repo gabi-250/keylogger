@@ -10,8 +10,6 @@ use crate::key_code::KeyCode;
 pub enum KeyloggerError {
     #[error("I/O error: {0}")]
     Io(#[from] io::Error),
-    #[error("no keyboard devices found")]
-    NoDevicesFound,
     #[error("not a keyboard device: {0}")]
     NotAKeyboard(PathBuf),
     #[error("invalid EV_KEY event: {0}")]

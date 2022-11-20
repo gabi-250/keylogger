@@ -1,6 +1,5 @@
 use std::convert::TryFrom;
 use std::fs::{self, File};
-use std::future::Future;
 use std::io;
 use std::mem;
 use std::os::unix::fs::FileTypeExt;
@@ -15,8 +14,10 @@ use tokio::io::unix::AsyncFd;
 
 use crate::error::KeyloggerError;
 use crate::keyboard::event_codes::{EV_KEY, EV_MSC, EV_REP, EV_SYN};
-use crate::keyboard::{KeyEvent, KeyEventSource, KeyboardBox};
-use crate::keylogger::KeyloggerResult;
+use crate::keyboard::KeyEventResult;
+use crate::keyboard::{KeyEvent, KeyEventSource, Keyboard};
+use crate::KeyboardDevice;
+use crate::KeyloggerResult;
 
 const IOC_NRBITS: libc::c_ulong = 8;
 const IOC_TYPEBITS: libc::c_ulong = 8;
@@ -27,10 +28,8 @@ const IOC_SIZESHIFT: libc::c_ulong = IOC_TYPESHIFT + IOC_TYPEBITS;
 const IOC_DIRSHIFT: libc::c_ulong = IOC_SIZESHIFT + IOC_SIZEBITS;
 const IOC_READ: libc::c_ulong = 2;
 
-pub(crate) type KeyEventResult = KeyloggerResult<Vec<KeyEvent>>;
-
 #[derive(Debug)]
-pub(crate) struct KeyboardDevice {
+pub(crate) struct InputDevice {
     /// The name of the device.
     pub(crate) name: String,
     /// The path of the input device (e.g. `/dev/input/event0`).
@@ -39,7 +38,7 @@ pub(crate) struct KeyboardDevice {
     pub(crate) async_fd: Arc<AsyncFd<File>>,
 }
 
-impl TryFrom<&Path> for KeyboardDevice {
+impl TryFrom<&Path> for InputDevice {
     type Error = KeyloggerError;
 
     fn try_from(device: &Path) -> Result<Self, Self::Error> {
@@ -62,14 +61,13 @@ impl TryFrom<&Path> for KeyboardDevice {
     }
 }
 
-impl AsRawFd for KeyboardDevice {
+impl AsRawFd for InputDevice {
     fn as_raw_fd(&self) -> RawFd {
         self.async_fd.as_raw_fd()
     }
 }
 
-#[async_trait::async_trait]
-impl KeyEventSource for KeyboardDevice {
+impl KeyEventSource for InputDevice {
     fn name(&self) -> &str {
         &self.name
     }
@@ -78,20 +76,10 @@ impl KeyEventSource for KeyboardDevice {
         self.device.as_path()
     }
 
-    async fn key_events(&self) -> KeyEventResult {
-        KeyEventFuture(Arc::clone(&self.async_fd)).await
-    }
-}
-
-/// A future that resolves once a number of keyboard events have been received.
-pub(crate) struct KeyEventFuture(Arc<AsyncFd<File>>);
-
-impl Future for KeyEventFuture {
-    type Output = KeyloggerResult<Vec<KeyEvent>>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<KeyEventResult> {
         loop {
-            let mut guard = ready!(self.0.poll_read_ready(cx))?;
+            let this = self.as_ref();
+            let mut guard = ready!(this.async_fd.poll_read_ready(cx))?;
 
             match guard.try_io(|inner| read_key_events(inner.as_raw_fd())) {
                 Ok(result) => return Poll::Ready(result.map_err(Into::into)),
@@ -103,10 +91,16 @@ impl Future for KeyEventFuture {
 
 /// Read [`libc::input_event`s](libc::input_event) from the specified file descriptor.
 pub(crate) fn read_key_events(fd: RawFd) -> io::Result<Vec<KeyEvent>> {
-    Ok(read_input_events(fd)?
+    let evs = read_input_events(fd)?
         .iter()
         .filter_map(|e| KeyEvent::try_from(e).ok())
-        .collect())
+        .collect::<Vec<_>>();
+
+    if evs.is_empty() {
+        return Err(io::Error::new(io::ErrorKind::WouldBlock, "no key events"));
+    }
+
+    Ok(evs)
 }
 
 fn read_input_events(fd: impl Into<RawFd>) -> io::Result<Vec<libc::input_event>> {
@@ -130,9 +124,11 @@ fn read_input_events(fd: impl Into<RawFd>) -> io::Result<Vec<libc::input_event>>
 }
 
 /// Find all available keyboard devices.
-pub(crate) fn find_keyboard_devices() -> KeyloggerResult<impl Iterator<Item = KeyboardBox>> {
+pub(crate) fn find_keyboard_devices() -> KeyloggerResult<impl Iterator<Item = KeyboardDevice>> {
     Ok(find_char_devices()?.filter_map(|entry| {
-        Some(Box::new(KeyboardDevice::try_from(entry.as_path()).ok()?) as Box<dyn KeyEventSource>)
+        Some(KeyboardDevice(Keyboard::new(
+            InputDevice::try_from(entry.as_path()).ok()?,
+        )))
     }))
 }
 

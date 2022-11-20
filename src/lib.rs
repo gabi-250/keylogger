@@ -1,9 +1,7 @@
 //! This crate provides the necessary scaffolding for handling keyboard input events on Linux.
 //!
-//! The keystrokes are captured by the [`Keylogger`](crate::Keylogger), which needs to be
-//! initialized with a [`KeyEventHandler`](crate::KeyEventHandler). The
-//! [`KeyEventHandler`](crate::KeyEventHandler) receives the captured [`KeyEvent`s](crate::KeyEvent)
-//! and must decide how to handle them.
+//! The installed [`KeyboardDevice`]s can be detected using [`find_keyboards`]. [`KeyboardDevice`]
+//! implements [`Stream`], where each element is a [`KeyEvent`].
 //!
 //! # Example
 //!
@@ -11,27 +9,21 @@
 //! with root privileges.
 //!
 //! ```no_run
-//! use async_trait::async_trait;
-//! use keylogger::{KeyEvent, KeyEventCause, KeyEventHandler, Keylogger, KeyloggerError};
-//! use std::path::Path;
-//!
-//! struct Logger;
-//!
-//! #[async_trait]
-//! impl KeyEventHandler for Logger {
-//!     async fn handle_events(&self, kb_device: &Path, kb_name: &str, events: &[KeyEvent]) {
-//!         println!("[{} @ {}]: ev={:?}", kb_name, kb_device.display(), events);
-//!     }
-//! }
+//! use futures::{future, StreamExt};
+//! use keylogger::{find_keyboards, KeyloggerError};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), KeyloggerError> {
-//!     let keylogger = Keylogger::new(Logger)?;
-//!     keylogger.capture().await?;
+//!     let keyboards = find_keyboards()?.into_iter().map(|mut k| async move {
+//!         while let Some(events) = k.next().await {
+//!             println!("[{} @ {}]: ev={events:?}", k.name(), k.path().display());
+//!         }
+//!     });
+//!
+//!     future::join_all(keyboards).await;
 //!
 //!     Ok(())
 //! }
-//!
 //! ```
 
 #[cfg(not(target_os = "linux"))]
@@ -40,9 +32,47 @@ compile_error!("This crate only works on Linux");
 mod error;
 pub(crate) mod key_code;
 mod keyboard;
-mod keylogger;
 
-pub use crate::keylogger::{KeyEventHandler, Keylogger};
 pub use error::KeyloggerError;
 pub use key_code::KeyCode;
 pub use keyboard::{KeyEvent, KeyEventCause};
+
+use std::path::Path;
+use std::pin::Pin;
+
+use keyboard::find_keyboard_devices;
+use keyboard::KeyEventSource;
+
+use futures::Stream;
+
+pub type KeyloggerResult<T> = Result<T, KeyloggerError>;
+
+/// Auto-detect the keyboard devices to watch.
+pub fn find_keyboards() -> KeyloggerResult<Vec<KeyboardDevice>> {
+    let keyboards = find_keyboard_devices()?.collect::<Vec<_>>();
+
+    Ok(keyboards)
+}
+
+pub struct KeyboardDevice(keyboard::Keyboard<keyboard::device::InputDevice>);
+
+impl KeyboardDevice {
+    pub fn name(&self) -> &str {
+        self.0.inner.name()
+    }
+
+    pub fn path(&self) -> &Path {
+        self.0.inner.path()
+    }
+}
+
+impl Stream for KeyboardDevice {
+    type Item = KeyloggerResult<KeyEvent>;
+
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        Pin::new(&mut self.get_mut().0).poll_next(cx)
+    }
+}

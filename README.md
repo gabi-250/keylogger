@@ -10,9 +10,8 @@
 
 This crate provides the necessary scaffolding for handling keyboard input events on Linux.
 
-The keystrokes are captured by the `Keylogger`, which needs to be initialized
-with a `KeyEventHandler`. The `KeyEventHandler` receives the captured
-`KeyEvent`s and must decide how to handle them.
+The installed `KeyboardDevice`s can be detected using `find_keyboards`.
+`KeyboardDevice` implements `Stream`, where each element is a `KeyEvent`.
 
 # Example
 
@@ -20,23 +19,18 @@ A simple example that prints the captured keystrokes to stdout. Note the
 keylogger needs to run with root privileges.
 
  ```rust
- use async_trait::async_trait;
- use keylogger::{KeyEvent, KeyEventCause, KeyEventHandler, Keylogger, KeyloggerError};
- use std::path::Path;
-
- struct Logger;
-
- #[async_trait]
- impl KeyEventHandler for Logger {
-     async fn handle_events(&self, kb_device: &Path, kb_name: &str, events: &[KeyEvent]) {
-         println!("[{} @ {}]: ev={:?}", kb_name, kb_device.display(), events);
-     }
- }
+ use futures::{future, StreamExt};
+ use keylogger::{find_keyboards, KeyloggerError};
 
  #[tokio::main]
  async fn main() -> Result<(), KeyloggerError> {
-     let keylogger = Keylogger::new(Logger)?;
-     keylogger.capture().await?;
+     let keyboards = find_keyboards()?.into_iter().map(|mut k| async move {
+         while let Some(events) = k.next().await {
+             println!("[{} @ {}]: ev={events:?}", k.name(), k.path().display());
+         }
+     });
+
+     future::join_all(keyboards).await;
 
      Ok(())
  }

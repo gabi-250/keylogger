@@ -1,40 +1,59 @@
 // A modified version of the `cpal` beeper example.
 // See: https://github.com/RustAudio/cpal/blob/master/examples/beep.rs
 
+use std::f32::consts::PI;
 use std::io;
-use std::path::Path;
 
-use async_trait::async_trait;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use keylogger::{KeyEvent, KeyEventCause, KeyEventHandler, Keylogger, KeyloggerError};
+use futures::{future, StreamExt};
+use keylogger::{find_keyboards, KeyEventCause, KeyboardDevice, KeyloggerError};
 
-struct Beeper(cpal::Device);
+struct Beeper {
+    keyboard: KeyboardDevice,
+    cpal: cpal::Device,
+}
 
-#[async_trait]
-impl KeyEventHandler for Beeper {
-    async fn handle_events(&self, kb_device: &Path, kb_name: &str, events: &[KeyEvent]) {
-        println!("[{} @ {}]: ev={:?}", kb_name, kb_device.display(), events);
+impl Beeper {
+    pub fn new(keyboard: KeyboardDevice) -> Self {
+        let host = cpal::default_host();
+        let cpal = host
+            .default_output_device()
+            .expect("failed to find output device");
 
-        let config: cpal::SupportedStreamConfig = self.0.default_output_config().unwrap();
+        Self { keyboard, cpal }
+    }
+}
 
-        for e in events {
-            // Only handle key presses
-            if e.cause == KeyEventCause::Release {
-                continue;
+impl Beeper {
+    async fn beep_on_keystroke(mut self) {
+        let config: cpal::SupportedStreamConfig = self.cpal.default_output_config().unwrap();
+        while let Some(events) = self.keyboard.next().await {
+            println!(
+                "[{} @ {}]: ev={:?}",
+                self.keyboard.name(),
+                self.keyboard.path().display(),
+                events
+            );
+
+            for e in events {
+                // Only handle key presses
+                if e.cause == KeyEventCause::Release {
+                    continue;
+                }
+
+                match config.sample_format() {
+                    cpal::SampleFormat::F32 => {
+                        run::<f32>(&self.cpal, &config.clone().into(), e.code as u16)
+                    }
+                    cpal::SampleFormat::I16 => {
+                        run::<i16>(&self.cpal, &config.clone().into(), e.code as u16)
+                    }
+                    cpal::SampleFormat::U16 => {
+                        run::<u16>(&self.cpal, &config.clone().into(), e.code as u16)
+                    }
+                }
+                .unwrap();
             }
-
-            match config.sample_format() {
-                cpal::SampleFormat::F32 => {
-                    run::<f32>(&self.0, &config.clone().into(), e.code as u16)
-                }
-                cpal::SampleFormat::I16 => {
-                    run::<i16>(&self.0, &config.clone().into(), e.code as u16)
-                }
-                cpal::SampleFormat::U16 => {
-                    run::<u16>(&self.0, &config.clone().into(), e.code as u16)
-                }
-            }
-            .unwrap();
         }
     }
 }
@@ -53,7 +72,7 @@ where
     let mut sample_clock = 0f32;
     let mut next_value = move || {
         sample_clock = (sample_clock + 1.0) % sample_rate;
-        (sample_clock * 440.0 * key_code as f32 * std::f32::consts::PI / sample_rate).sin()
+        (sample_clock * 440.0 * key_code as f32 * PI / sample_rate).sin()
     };
 
     let err_fn = |err| eprintln!("an error occurred on stream: {}", err);
@@ -88,15 +107,11 @@ where
 
 #[tokio::main]
 async fn main() -> Result<(), KeyloggerError> {
-    let host = cpal::default_host();
-    let device = host
-        .default_output_device()
-        .expect("failed to find output device");
+    let keyboards = find_keyboards()?
+        .into_iter()
+        .map(|k| Beeper::new(k).beep_on_keystroke());
 
-    let beeper = Beeper(device);
-    let keylogger = Keylogger::new(beeper)?;
-
-    keylogger.capture().await?;
+    future::join_all(keyboards).await;
 
     Ok(())
 }
