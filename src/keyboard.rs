@@ -15,12 +15,38 @@ use pin_project::pin_project;
 
 use crate::error::KeyloggerError;
 use crate::key_code::KeyCode;
-use crate::keyboard::event_codes::{EV_KEY, EV_KEY_PRESS, EV_KEY_RELEASE};
 use crate::KeyloggerResult;
+use device::InputDevice;
+use event_codes::{EV_KEY, EV_KEY_PRESS, EV_KEY_RELEASE};
 
-pub(crate) use crate::keyboard::device::find_keyboard_devices;
+pub use crate::keyboard::device::find_keyboards;
 
 type KeyEventResult = KeyloggerResult<Vec<KeyEvent>>;
+
+pub struct KeyboardDevice(Keyboard<InputDevice>);
+
+impl KeyboardDevice {
+    /// A human-readable description of the keyboard (e.g. "USB-HID Keyboard").
+    pub fn name(&self) -> &str {
+        self.0.inner.name()
+    }
+
+    /// The path of the device (e.g. `/dev/input/event4`)
+    pub fn path(&self) -> &Path {
+        self.0.inner.path()
+    }
+}
+
+impl Stream for KeyboardDevice {
+    type Item = KeyloggerResult<KeyEvent>;
+
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        Pin::new(&mut self.get_mut().0).poll_next(cx)
+    }
+}
 
 /// A generic keyboard device.
 #[pin_project]
@@ -69,10 +95,13 @@ impl<K: KeyEventSource> Stream for Keyboard<K> {
 }
 
 pub(crate) trait KeyEventSource: fmt::Debug + Unpin + Send + Sync {
+    /// A human-readable description of the event source (e.g. "USB-HID Keyboard").
     fn name(&self) -> &str;
 
+    /// The path of the device (e.g. `/dev/input/event4`)
     fn path(&self) -> &Path;
 
+    /// Poll the event source.
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<KeyEventResult>;
 }
 

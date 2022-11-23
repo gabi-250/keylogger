@@ -14,9 +14,7 @@ use tokio::io::unix::AsyncFd;
 
 use crate::error::KeyloggerError;
 use crate::keyboard::event_codes::{EV_KEY, EV_MSC, EV_REP, EV_SYN};
-use crate::keyboard::KeyEventResult;
-use crate::keyboard::{KeyEvent, KeyEventSource, Keyboard};
-use crate::KeyboardDevice;
+use crate::keyboard::{KeyEvent, KeyEventResult, KeyEventSource, Keyboard, KeyboardDevice};
 use crate::KeyloggerResult;
 
 const IOC_NRBITS: libc::c_ulong = 8;
@@ -123,8 +121,15 @@ fn read_input_events(fd: impl Into<RawFd>) -> io::Result<Vec<libc::input_event>>
         .collect())
 }
 
+/// Auto-detect the keyboard devices to watch.
+pub fn find_keyboards() -> KeyloggerResult<Vec<KeyboardDevice>> {
+    let keyboards = find_keyboard_devices()?.collect::<Vec<_>>();
+
+    Ok(keyboards)
+}
+
 /// Find all available keyboard devices.
-pub(crate) fn find_keyboard_devices() -> KeyloggerResult<impl Iterator<Item = KeyboardDevice>> {
+fn find_keyboard_devices() -> KeyloggerResult<impl Iterator<Item = KeyboardDevice>> {
     Ok(find_char_devices()?.filter_map(|entry| {
         Some(KeyboardDevice(Keyboard::new(
             InputDevice::try_from(entry.as_path()).ok()?,
